@@ -40,6 +40,9 @@
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
     <string name="stitch_type">Stitch type</string>
+    <string name="bead_shape">Bead shape</string>
+    <string name="shape_circle">Circle</string>
+    <string name="shape_rounded_rectangle">Rounded rectangle</string>
     <string name="grid_size">Grid size: %1$d x %2$d</string>
     <string name="width">Width</string>
     <string name="height">Height</string>

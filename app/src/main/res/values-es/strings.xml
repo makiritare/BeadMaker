@@ -40,6 +40,9 @@
     <string name="cancel">Cancelar</string>
     <string name="close">Cerrar</string>
     <string name="stitch_type">Tipo de puntada</string>
+    <string name="bead_shape">Forma de cuenta</string>
+    <string name="shape_circle">Círculo</string>
+    <string name="shape_rounded_rectangle">Rectángulo redondeado</string>
     <string name="grid_size">Tamaño de cuadrícula: %1$d x %2$d</string>
     <string name="width">Ancho</string>
     <string name="height">Alto</string>

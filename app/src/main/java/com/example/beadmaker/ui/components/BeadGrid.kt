@@ -17,24 +17,30 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
+import com.example.beadmaker.ui.model.BeadShape
 import com.example.beadmaker.ui.model.StitchLayoutStyle
 import com.example.beadmaker.ui.model.StitchMode
 
-private val BeadCellShape = RoundedCornerShape(12.dp)
+private val BeadCellCircleShape = CircleShape
+private val BeadCellRoundedRectShape = RoundedCornerShape(6.dp)
 
 @Composable
 fun BeadGrid(
     beads: List<Int>,
     colors: List<Color>,
     stitchMode: StitchMode,
+    beadShape: BeadShape,
     modifier: Modifier = Modifier,
     columns: Int = 16,
     onCellTap: (index: Int) -> Unit
@@ -105,6 +111,7 @@ fun BeadGrid(
                                 beadColor = beadColorIndex
                                     .takeIf { it >= 0 }
                                     ?.let(colors::getOrNull),
+                                beadShape = beadShape,
                                 modifier = Modifier.width(beadSize),
                                 onTap = { onCellTap(beadIndex) }
                             )
@@ -119,58 +126,132 @@ fun BeadGrid(
 @Composable
 private fun BeadCell(
     beadColor: Color?,
+    beadShape: BeadShape,
     modifier: Modifier = Modifier,
     onTap: () -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
     val outline = MaterialTheme.colorScheme.outline
-    val cellBackground = if (isDark) {
+    val cellShape = when (beadShape) {
+        BeadShape.Circle -> BeadCellCircleShape
+        BeadShape.RoundedRectangle -> BeadCellRoundedRectShape
+    }
+    val circleCellBackground = if (isDark) {
         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
     } else {
         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    }
+    val cellBackground = when (beadShape) {
+        BeadShape.Circle -> circleCellBackground
+        BeadShape.RoundedRectangle -> Color.Transparent
+    }
+    val cellBorderColor = when (beadShape) {
+        BeadShape.Circle -> if (isDark) {
+            outline.copy(alpha = 0.3f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        }
+        BeadShape.RoundedRectangle -> Color.Transparent
     }
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
             .padding(1.dp)
-            .clip(BeadCellShape)
+            .clip(cellShape)
             .background(cellBackground)
             .border(
                 width = 0.5.dp,
-                color = if (isDark) outline.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outlineVariant,
-                shape = BeadCellShape
+                color = cellBorderColor,
+                shape = cellShape
             )
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(18.dp)) {
-            val radius = size.minDimension / 2.2f
+            val shapeSize = size.minDimension * 0.9f
+            val shapeRadius = shapeSize / 2f
+            val rectWidth = size.width * 0.92f
+            val rectHeight = size.height * 0.62f
+            val rectLeft = (size.width - rectWidth) / 2f
+            val rectTop = (size.height - rectHeight) / 2f
+            val rectCorner = CornerRadius(rectHeight * 0.18f, rectHeight * 0.18f)
+            val rimStroke = Stroke(width = 1.dp.toPx())
+            val emptyStroke = Stroke(width = 1.5.dp.toPx())
+
             if (beadColor == null) {
                 // Empty "socket" look
-                drawCircle(
-                    color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
-                    radius = radius,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                )
+                when (beadShape) {
+                    BeadShape.Circle -> drawCircle(
+                        color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
+                        radius = shapeRadius,
+                        style = emptyStroke
+                    )
+
+                    BeadShape.RoundedRectangle -> drawRoundRect(
+                        color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
+                        topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                        size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                        cornerRadius = rectCorner,
+                        style = emptyStroke
+                    )
+                }
             } else {
                 // Painted bead with slight depth
-                drawCircle(
-                    color = beadColor,
-                    radius = radius
-                )
-                // Dark rim for contrast
-                drawCircle(
-                    color = Color.Black.copy(alpha = 0.15f),
-                    radius = radius,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                )
+                when (beadShape) {
+                    BeadShape.Circle -> {
+                        drawCircle(
+                            color = beadColor,
+                            radius = shapeRadius
+                        )
+                        // Dark rim for contrast
+                        drawCircle(
+                            color = Color.Black.copy(alpha = 0.15f),
+                            radius = shapeRadius,
+                            style = rimStroke
+                        )
+                    }
+
+                    BeadShape.RoundedRectangle -> {
+                        drawRoundRect(
+                            color = beadColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner
+                        )
+                        drawRoundRect(
+                            color = Color.Black.copy(alpha = 0.15f),
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = rimStroke
+                        )
+                    }
+                }
                 // Small highlight to give 3D feel
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.25f),
-                    radius = radius * 0.4f,
-                    center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-                )
+                when (beadShape) {
+                    BeadShape.Circle -> drawCircle(
+                        color = Color.White.copy(alpha = 0.25f),
+                        radius = shapeRadius * 0.4f,
+                        center = center.copy(
+                            x = center.x - shapeRadius * 0.3f,
+                            y = center.y - shapeRadius * 0.3f
+                        )
+                    )
+
+                    BeadShape.RoundedRectangle -> drawRoundRect(
+                        color = Color.White.copy(alpha = 0.2f),
+                        topLeft = androidx.compose.ui.geometry.Offset(
+                            x = rectLeft + rectWidth * 0.1f,
+                            y = rectTop + rectHeight * 0.12f
+                        ),
+                        size = androidx.compose.ui.geometry.Size(
+                            width = rectWidth * 0.35f,
+                            height = rectHeight * 0.28f
+                        ),
+                        cornerRadius = rectCorner
+                    )
+                }
             }
         }
     }

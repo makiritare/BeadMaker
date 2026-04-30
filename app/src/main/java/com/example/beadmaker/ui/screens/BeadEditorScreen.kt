@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.example.beadmaker.R
 import com.example.beadmaker.ui.components.BeadGrid
+import com.example.beadmaker.ui.model.BeadShape
 import com.example.beadmaker.ui.model.StitchMode
 import com.example.beadmaker.ui.state.InteractionModeGrid
 import com.example.beadmaker.ui.state.InteractionModePaint
@@ -139,6 +140,7 @@ fun BeadEditorScreen() {
     val beads = uiState.beads
     val templateImageUri = uiState.templateImageUriString?.let(Uri::parse)
     val stitchMode = StitchMode.fromId(uiState.stitchModeId)
+    val beadShape = BeadShape.fromId(uiState.beadShapeId)
     val currentColorIndex = uiState.selectedColorIndex.takeIf { it in paletteColors.indices } ?: 0
     val currentColor = paletteColors[currentColorIndex]
     val templateAdjustMode = uiState.interactionMode == InteractionModeTemplate
@@ -440,6 +442,7 @@ fun BeadEditorScreen() {
                         beads = beads,
                         colors = paletteColors,
                         stitchMode = stitchMode,
+                        beadShape = beadShape,
                         columns = gridColumns,
                         onCellTap = editorState::paintCell
                     )
@@ -701,6 +704,53 @@ fun BeadEditorScreen() {
                                             onClick = {
                                                 editorState.updatePendingStitch(option.id)
                                                 stitchDropdownExpanded = false
+                                            },
+                                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = stringResource(R.string.bead_shape),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+
+                            var shapeDropdownExpanded by rememberSaveable { mutableStateOf(false) }
+                            val selectedBeadShape = BeadShape.fromId(uiState.pendingSettingsBeadShapeId)
+
+                            ExposedDropdownMenuBox(
+                                expanded = shapeDropdownExpanded,
+                                onExpandedChange = { shapeDropdownExpanded = it },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = stringResource(selectedBeadShape.labelRes),
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = shapeDropdownExpanded) },
+                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                                    modifier = Modifier
+                                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                                        .fillMaxWidth(),
+                                    shape = ControlShape
+                                )
+
+                                ExposedDropdownMenu(
+                                    expanded = shapeDropdownExpanded,
+                                    onDismissRequest = { shapeDropdownExpanded = false }
+                                ) {
+                                    BeadShape.entries.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = stringResource(option.labelRes),
+                                                    style = MaterialTheme.typography.bodyLarge
+                                                )
+                                            },
+                                            onClick = {
+                                                editorState.updatePendingBeadShape(option.id)
+                                                shapeDropdownExpanded = false
                                             },
                                             contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                                         )
