@@ -39,6 +39,16 @@
     <string name="redo">Rehacer</string>
     <string name="cancel">Cancelar</string>
     <string name="close">Cerrar</string>
+    <string name="file_actions">Archivos</string>
+    <string name="save">Guardar</string>
+    <string name="load">Cargar</string>
+    <string name="export">Exportar</string>
+    <string name="pattern_saved">Patrón guardado.</string>
+    <string name="pattern_save_failed">No se pudo guardar el patrón.</string>
+    <string name="pattern_loaded">Patrón cargado.</string>
+    <string name="pattern_load_failed">No se encontró un patrón guardado.</string>
+    <string name="pattern_exported">Patrón exportado.</string>
+    <string name="pattern_export_failed">No se pudo exportar el patrón.</string>
     <string name="stitch_type">Tipo de puntada</string>
     <string name="bead_shape">Forma de cuenta</string>
     <string name="shape_circle">Círculo</string>

@@ -39,6 +39,16 @@
     <string name="redo">Redo</string>
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
+    <string name="file_actions">Files</string>
+    <string name="save">Save</string>
+    <string name="load">Load</string>
+    <string name="export">Export</string>
+    <string name="pattern_saved">Pattern saved.</string>
+    <string name="pattern_save_failed">Couldn\'t save pattern.</string>
+    <string name="pattern_loaded">Pattern loaded.</string>
+    <string name="pattern_load_failed">No saved pattern found.</string>
+    <string name="pattern_exported">Pattern exported.</string>
+    <string name="pattern_export_failed">Couldn\'t export pattern.</string>
     <string name="stitch_type">Stitch type</string>
     <string name="bead_shape">Bead shape</string>
     <string name="shape_circle">Circle</string>

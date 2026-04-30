@@ -17,6 +17,9 @@ import com.example.beadmaker.ui.model.BeadShape
 import com.example.beadmaker.ui.model.StitchMode
 import java.io.File
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 const val DefaultGridColumns = 16
@@ -37,6 +40,8 @@ const val InteractionModeTemplate = 1
 const val InteractionModeGrid = 2
 
 private const val MaxUndoStackSize = 30
+private const val SavedPatternFileName = "saved_pattern.bm"
+private const val PatternFormatVersion = 1
 
 data class EditorUiState(
     val gridColumns: Int = DefaultGridColumns,
@@ -347,6 +352,43 @@ class BeadEditorState(
         )
     }
 
+    fun savePattern(): Boolean {
+        return runCatching {
+            File(appContext.filesDir, SavedPatternFileName).writeText(
+                text = serializeBoardSnapshot(currentSnapshot()),
+                charset = Charsets.UTF_8
+            )
+            true
+        }.getOrDefault(false)
+    }
+
+    fun loadSavedPattern(): Boolean {
+        val saveFile = File(appContext.filesDir, SavedPatternFileName)
+        if (!saveFile.exists()) return false
+        val snapshot = runCatching {
+            deserializeBoardSnapshot(saveFile.readText(Charsets.UTF_8))
+        }.getOrNull() ?: return false
+
+        applySnapshot(snapshot)
+        return true
+    }
+
+    fun exportPatternToUri(uri: Uri): Boolean {
+        val payload = serializeBoardSnapshot(currentSnapshot())
+        return runCatching {
+            val stream = appContext.contentResolver.openOutputStream(uri) ?: return@runCatching false
+            stream.bufferedWriter(Charsets.UTF_8).use {
+                it.write(payload)
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    fun suggestedExportFileName(): String {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        return "bead_pattern_$timestamp.bm"
+    }
+
     private fun replaceTemplateImage(newUriString: String?) {
         deleteTemplateCacheFile(appContext, uiState.templateImageUriString)
         uiState = uiState.copy(templateImageUriString = newUriString)
@@ -367,6 +409,23 @@ class BeadEditorState(
             stitchModeId = uiState.stitchModeId,
             beadShapeId = uiState.beadShapeId,
             beads = uiState.beads
+        )
+    }
+
+    private fun applySnapshot(snapshot: BoardSnapshot) {
+        undoStack.clear()
+        redoStack.clear()
+        uiState = uiState.copy(
+            gridColumns = snapshot.gridColumns,
+            gridRows = snapshot.gridRows,
+            stitchModeId = snapshot.stitchModeId,
+            beadShapeId = snapshot.beadShapeId,
+            beads = snapshot.beads,
+            pendingSettingsStitchId = snapshot.stitchModeId,
+            pendingSettingsBeadShapeId = snapshot.beadShapeId,
+            pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
+            pendingSettingsGridRows = snapshot.gridRows.toFloat(),
+            interactionMode = InteractionModePaint
         )
     }
 
@@ -518,6 +577,62 @@ fun updateBeadAt(
     return beads.toMutableList().apply {
         this[index] = nextColor
     }
+}
+
+fun serializeBoardSnapshot(snapshot: BoardSnapshot): String {
+    val serializedBeads = snapshot.beads.joinToString(",")
+    return buildString {
+        appendLine("beadmaker_format=$PatternFormatVersion")
+        appendLine("grid_columns=${snapshot.gridColumns}")
+        appendLine("grid_rows=${snapshot.gridRows}")
+        appendLine("stitch_mode_id=${snapshot.stitchModeId}")
+        appendLine("bead_shape_id=${snapshot.beadShapeId}")
+        append("beads=$serializedBeads")
+    }
+}
+
+fun deserializeBoardSnapshot(serialized: String): BoardSnapshot? {
+    val values = serialized
+        .lineSequence()
+        .mapNotNull { line ->
+            val separatorIndex = line.indexOf('=')
+            if (separatorIndex <= 0) {
+                null
+            } else {
+                val key = line.substring(0, separatorIndex).trim()
+                val value = line.substring(separatorIndex + 1).trim()
+                key to value
+            }
+        }
+        .toMap()
+
+    if (values["beadmaker_format"]?.toIntOrNull() != PatternFormatVersion) {
+        return null
+    }
+
+    val gridColumns = values["grid_columns"]?.toIntOrNull() ?: return null
+    val gridRows = values["grid_rows"]?.toIntOrNull() ?: return null
+    if (gridColumns !in MinGridSize..MaxGridSize || gridRows !in MinGridSize..MaxGridSize) {
+        return null
+    }
+
+    val stitchModeId = StitchMode.fromId(values["stitch_mode_id"].orEmpty()).id
+    val beadShapeId = BeadShape.fromId(values["bead_shape_id"].orEmpty()).id
+    val beadsText = values["beads"] ?: return null
+    val beads = beadsText.split(',').map { token ->
+        token.toIntOrNull() ?: return null
+    }
+    if (beads.size != gridColumns * gridRows || beads.any { it < EmptyBead }) {
+        return null
+    }
+
+    return BoardSnapshot(
+        gridColumns = gridColumns,
+        gridRows = gridRows,
+        stitchModeId = stitchModeId,
+        beadShapeId = beadShapeId,
+        beads = beads
+    )
 }
 
 fun isGridEmpty(beads: List<Int>): Boolean = beads.all { it == EmptyBead }

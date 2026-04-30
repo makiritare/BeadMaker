@@ -1,6 +1,7 @@
 package com.example.beadmaker.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -157,6 +159,23 @@ fun BeadEditorScreen() {
     ) { success ->
         editorState.finishCameraTemplateCapture(success)
     }
+    val exportPatternLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            val exportSucceeded = editorState.exportPatternToUri(uri)
+            Toast.makeText(
+                context,
+                if (exportSucceeded) {
+                    context.getString(R.string.pattern_exported)
+                } else {
+                    context.getString(R.string.pattern_export_failed)
+                },
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+    var showFileActionsDialog by rememberSaveable { mutableStateOf(false) }
     val modeStatusText = when {
         templateAdjustMode -> stringResource(R.string.status_template_adjust)
         boardAdjustMode -> stringResource(R.string.status_grid_adjust)
@@ -280,6 +299,26 @@ fun BeadEditorScreen() {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Redo,
                         contentDescription = stringResource(R.string.redo)
+                    )
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                IconButton(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape
+                        ),
+                    onClick = { showFileActionsDialog = true }
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Save,
+                        contentDescription = stringResource(R.string.file_actions)
                     )
                 }
             }
@@ -848,6 +887,74 @@ fun BeadEditorScreen() {
                     TextButton(onClick = editorState::dismissToolsDialog) {
                         Text(stringResource(R.string.cancel))
                     }
+                }
+            }
+        )
+    }
+
+    if (showFileActionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showFileActionsDialog = false },
+            title = { Text(text = stringResource(R.string.file_actions)) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
+                ) {
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val saveSucceeded = editorState.savePattern()
+                            Toast.makeText(
+                                context,
+                                if (saveSucceeded) {
+                                    context.getString(R.string.pattern_saved)
+                                } else {
+                                    context.getString(R.string.pattern_save_failed)
+                                },
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            showFileActionsDialog = false
+                        },
+                        shape = ControlShape
+                    ) {
+                        Text(stringResource(R.string.save))
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val loadSucceeded = editorState.loadSavedPattern()
+                            Toast.makeText(
+                                context,
+                                if (loadSucceeded) {
+                                    context.getString(R.string.pattern_loaded)
+                                } else {
+                                    context.getString(R.string.pattern_load_failed)
+                                },
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            showFileActionsDialog = false
+                        },
+                        shape = ControlShape
+                    ) {
+                        Text(stringResource(R.string.load))
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            showFileActionsDialog = false
+                            exportPatternLauncher.launch(editorState.suggestedExportFileName())
+                        },
+                        shape = ControlShape
+                    ) {
+                        Text(stringResource(R.string.export))
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showFileActionsDialog = false }) {
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )
