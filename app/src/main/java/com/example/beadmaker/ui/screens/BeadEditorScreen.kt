@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package com.example.beadmaker.ui.screens
 
 import android.content.Context
