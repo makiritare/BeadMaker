@@ -102,7 +102,6 @@ private const val InteractionModeGrid = 2
 private const val SpaceXs = 8
 private const val SpaceSm = 12
 private const val SpaceMd = 16
-private const val SpaceLg = 24
 
 private val ControlShape = RoundedCornerShape(14.dp)
 private val PaletteChipShape = RoundedCornerShape(12.dp)
@@ -144,9 +143,9 @@ fun BeadEditorScreen() {
     val isDark = isSystemInDarkTheme()
     var gridColumns by rememberSaveable { mutableIntStateOf(DefaultGridColumns) }
     var gridRows by rememberSaveable { mutableIntStateOf(DefaultGridRows) }
-    var stitchModeId by rememberSaveable { mutableStateOf<String>(StitchMode.defaults.id) }
+    var stitchModeId by rememberSaveable { mutableStateOf(StitchMode.defaults.id) }
     var beads by rememberSaveable {
-        mutableStateOf<List<Int>>(List(gridColumns * gridRows) { EmptyBead })
+        mutableStateOf(List(gridColumns * gridRows) { EmptyBead })
     }
     val paletteColors = BasicPaletteColorValues.map { Color(it) }
 
@@ -786,7 +785,7 @@ fun BeadEditorScreen() {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "${MinGridSize}",
+                                    text = "$MinGridSize",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -799,7 +798,7 @@ fun BeadEditorScreen() {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "${MaxGridSize}",
+                                    text = "$MaxGridSize",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -816,7 +815,7 @@ fun BeadEditorScreen() {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "${MinGridSize}",
+                                    text = "$MinGridSize",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -829,7 +828,7 @@ fun BeadEditorScreen() {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "${MaxGridSize}",
+                                    text = "$MaxGridSize",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -938,7 +937,7 @@ private fun PalettePickerDialog(
     onDismiss: () -> Unit,
     onApply: (Int) -> Unit
 ) {
-    var pendingSelection by rememberSaveable { mutableStateOf(selectedColorIndex) }
+    var pendingSelection by rememberSaveable { mutableIntStateOf(selectedColorIndex) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
