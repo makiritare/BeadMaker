@@ -1,13 +1,11 @@
-@file:Suppress("AssignedValueIsNeverRead")
-
 package com.example.beadmaker.ui.screens
 
-import android.content.Context
 import android.net.Uri
-import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoFixOff
 import androidx.compose.material.icons.outlined.Close
@@ -28,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,7 +58,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -80,26 +78,15 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.beadmaker.R
 import com.example.beadmaker.ui.components.BeadGrid
 import com.example.beadmaker.ui.model.StitchMode
+import com.example.beadmaker.ui.state.InteractionModeGrid
+import com.example.beadmaker.ui.state.InteractionModePaint
+import com.example.beadmaker.ui.state.InteractionModeTemplate
+import com.example.beadmaker.ui.state.MaxGridSize
+import com.example.beadmaker.ui.state.MinGridSize
+import com.example.beadmaker.ui.state.MinTemplateOpacity
+import com.example.beadmaker.ui.state.createTemplateCaptureUri
+import com.example.beadmaker.ui.state.rememberBeadEditorState
 import coil.compose.AsyncImage
-import java.io.File
-import java.util.UUID
-
-private const val DefaultGridColumns = 16
-private const val DefaultGridRows = 16
-private const val MinGridSize = 8
-private const val MaxGridSize = 64
-private const val EmptyBead = -1
-private const val MinTemplateOpacity = 0.1f
-private const val DefaultTemplateOpacity = 0.55f
-private const val MinTemplateScale = 0.2f
-private const val MaxTemplateScale = 5.0f
-private const val DefaultTemplateScale = 1.0f
-private const val MinBoardScale = 1.0f
-private const val MaxBoardScale = 6.0f
-private const val DefaultBoardScale = 1.0f
-private const val InteractionModePaint = 0
-private const val InteractionModeTemplate = 1
-private const val InteractionModeGrid = 2
 
 private const val SpaceXs = 8
 private const val SpaceSm = 12
@@ -143,73 +130,36 @@ private val BasicPaletteColorValues = listOf(
 fun BeadEditorScreen() {
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
-    var gridColumns by rememberSaveable { mutableIntStateOf(DefaultGridColumns) }
-    var gridRows by rememberSaveable { mutableIntStateOf(DefaultGridRows) }
-    var stitchModeId by rememberSaveable { mutableStateOf(StitchMode.defaults.id) }
-    var beads by rememberSaveable {
-        mutableStateOf(List(gridColumns * gridRows) { EmptyBead })
-    }
+    val editorState = rememberBeadEditorState()
+    val uiState = editorState.uiState
     val paletteColors = BasicPaletteColorValues.map { Color(it) }
 
-    var selectedColorIndex by rememberSaveable { mutableIntStateOf(0) }
-    var eraserSelected by rememberSaveable { mutableStateOf(false) }
-    var templateImageUriString by rememberSaveable { mutableStateOf<String?>(null) }
-    var templateOpacity by rememberSaveable { mutableFloatStateOf(DefaultTemplateOpacity) }
-    var templateScale by rememberSaveable { mutableFloatStateOf(DefaultTemplateScale) }
-    var templateOffsetX by rememberSaveable { mutableFloatStateOf(0f) }
-    var templateOffsetY by rememberSaveable { mutableFloatStateOf(0f) }
-    var boardScale by rememberSaveable { mutableFloatStateOf(DefaultBoardScale) }
-    var boardOffsetX by rememberSaveable { mutableFloatStateOf(0f) }
-    var boardOffsetY by rememberSaveable { mutableFloatStateOf(0f) }
-    var interactionMode by rememberSaveable { mutableIntStateOf(InteractionModePaint) }
-    var showColorPickerDialog by rememberSaveable { mutableStateOf(false) }
-    var showToolsDialog by rememberSaveable { mutableStateOf(false) }
-    var selectedToolsTab by rememberSaveable { mutableIntStateOf(0) }
-    var pendingCameraUriString by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingSettingsStitchId by rememberSaveable { mutableStateOf(stitchModeId) }
-    var pendingSettingsGridColumns by rememberSaveable { mutableFloatStateOf(gridColumns.toFloat()) }
-    var pendingSettingsGridRows by rememberSaveable { mutableFloatStateOf(gridRows.toFloat()) }
-
-    val templateImageUri = templateImageUriString?.let(Uri::parse)
-    val stitchMode = StitchMode.fromId(stitchModeId)
-    val currentColorIndex = selectedColorIndex.takeIf { it in paletteColors.indices } ?: 0
+    val gridColumns = uiState.gridColumns
+    val gridRows = uiState.gridRows
+    val beads = uiState.beads
+    val templateImageUri = uiState.templateImageUriString?.let(Uri::parse)
+    val stitchMode = StitchMode.fromId(uiState.stitchModeId)
+    val currentColorIndex = uiState.selectedColorIndex.takeIf { it in paletteColors.indices } ?: 0
     val currentColor = paletteColors[currentColorIndex]
-    val templateAdjustMode = interactionMode == InteractionModeTemplate
-    val boardAdjustMode = interactionMode == InteractionModeGrid
-    val resetTemplateAndBoardAdjustments = {
-        templateScale = DefaultTemplateScale
-        templateOffsetX = 0f
-        templateOffsetY = 0f
-        boardScale = DefaultBoardScale
-        boardOffsetX = 0f
-        boardOffsetY = 0f
-        interactionMode = InteractionModePaint
-    }
-    val openToolsDialogAtTab: (Int) -> Unit = { tabIndex ->
-        selectedToolsTab = tabIndex
-        pendingSettingsStitchId = stitchModeId
-        pendingSettingsGridColumns = gridColumns.toFloat()
-        pendingSettingsGridRows = gridRows.toFloat()
-        showToolsDialog = true
-    }
+    val templateAdjustMode = uiState.interactionMode == InteractionModeTemplate
+    val boardAdjustMode = uiState.interactionMode == InteractionModeGrid
     val templatePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            templateImageUriString = uri.toString()
-            resetTemplateAndBoardAdjustments()
+            editorState.importTemplateFromPicker(uri)
         }
     }
     val cameraTemplateCapture = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) {
-            pendingCameraUriString?.let {
-                templateImageUriString = it
-                resetTemplateAndBoardAdjustments()
-            }
-        }
-        pendingCameraUriString = null
+        editorState.finishCameraTemplateCapture(success)
+    }
+    val modeStatusText = when {
+        templateAdjustMode -> stringResource(R.string.status_template_adjust)
+        boardAdjustMode -> stringResource(R.string.status_grid_adjust)
+        uiState.eraserSelected -> stringResource(R.string.status_eraser)
+        else -> stringResource(R.string.status_paint)
     }
 
     Scaffold { innerPadding ->
@@ -217,13 +167,14 @@ fun BeadEditorScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = SpaceMd.dp, vertical = SpaceMd.dp),
             verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp),
+                horizontalArrangement = Arrangement.spacedBy(SpaceSm.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
@@ -231,27 +182,27 @@ fun BeadEditorScreen() {
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(
-                            color = if (eraserSelected) {
+                            color = if (uiState.eraserSelected) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 Color.Transparent
                             }
                         )
                         .border(
-                            width = if (eraserSelected) 2.dp else 1.dp,
-                            color = if (eraserSelected) {
+                            width = if (uiState.eraserSelected) 2.dp else 1.dp,
+                            color = if (uiState.eraserSelected) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.outlineVariant
                             },
                             shape = CircleShape
                         ),
-                    onClick = { eraserSelected = !eraserSelected },
+                    onClick = editorState::toggleEraser,
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.AutoFixOff,
                         contentDescription = stringResource(R.string.eraser),
-                        tint = if (eraserSelected) {
+                        tint = if (uiState.eraserSelected) {
                             MaterialTheme.colorScheme.onPrimary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
@@ -265,15 +216,15 @@ fun BeadEditorScreen() {
                         .clip(CircleShape)
                         .background(currentColor)
                         .border(
-                            width = if (eraserSelected) 1.dp else 2.dp,
-                            color = if (eraserSelected) {
+                            width = if (uiState.eraserSelected) 1.dp else 2.dp,
+                            color = if (uiState.eraserSelected) {
                                 MaterialTheme.colorScheme.outlineVariant
                             } else {
                                 MaterialTheme.colorScheme.primary
                             },
                             shape = CircleShape
                         ),
-                    onClick = { showColorPickerDialog = true },
+                    onClick = editorState::showColorPicker,
                 ) {
                     androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                         val radius = size.minDimension / 2.2f
@@ -292,6 +243,43 @@ fun BeadEditorScreen() {
                     }
                 }
 
+                IconButton(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape
+                        ),
+                    onClick = editorState::undo,
+                    enabled = editorState.canUndo
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.Undo,
+                        contentDescription = stringResource(R.string.undo)
+                    )
+                }
+
+                IconButton(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape
+                        ),
+                    onClick = editorState::redo,
+                    enabled = editorState.canRedo
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.Redo,
+                        contentDescription = stringResource(R.string.redo)
+                    )
+                }
             }
 
             Row(
@@ -301,7 +289,7 @@ fun BeadEditorScreen() {
             ) {
                 ModeIconButton(
                     modifier = Modifier.weight(1f),
-                    selected = interactionMode == InteractionModePaint,
+                    selected = uiState.interactionMode == InteractionModePaint,
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedContentColor = MaterialTheme.colorScheme.onPrimary,
                     icon = {
@@ -310,12 +298,12 @@ fun BeadEditorScreen() {
                             contentDescription = stringResource(R.string.mode_paint)
                         )
                     },
-                    onClick = { interactionMode = InteractionModePaint }
+                    onClick = editorState::setPaintMode
                 )
 
                 ModeIconButton(
                     modifier = Modifier.weight(1f),
-                    selected = interactionMode == InteractionModeTemplate,
+                    selected = uiState.interactionMode == InteractionModeTemplate,
                     enabled = templateImageUri != null,
                     selectedContainerColor = MaterialTheme.colorScheme.tertiary,
                     selectedContentColor = MaterialTheme.colorScheme.onTertiary,
@@ -325,19 +313,12 @@ fun BeadEditorScreen() {
                             contentDescription = stringResource(R.string.mode_template)
                         )
                     },
-                    onClick = {
-                        interactionMode =
-                            if (interactionMode == InteractionModeTemplate) {
-                                InteractionModePaint
-                            } else {
-                                InteractionModeTemplate
-                            }
-                    }
+                    onClick = editorState::toggleTemplateMode
                 )
 
                 ModeIconButton(
                     modifier = Modifier.weight(1f),
-                    selected = interactionMode == InteractionModeGrid,
+                    selected = uiState.interactionMode == InteractionModeGrid,
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedContentColor = MaterialTheme.colorScheme.onPrimary,
                     icon = {
@@ -346,16 +327,15 @@ fun BeadEditorScreen() {
                             contentDescription = stringResource(R.string.mode_grid)
                         )
                     },
-                    onClick = {
-                        interactionMode =
-                            if (interactionMode == InteractionModeGrid) {
-                                InteractionModePaint
-                            } else {
-                                InteractionModeGrid
-                            }
-                    }
+                    onClick = editorState::toggleGridMode
                 )
             }
+
+            Text(
+                text = modeStatusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -373,7 +353,7 @@ fun BeadEditorScreen() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 TextButton(
-                    onClick = { openToolsDialogAtTab(0) }
+                    onClick = { editorState.openToolsDialogAtTab(0) }
                 ) {
                     Text(stringResource(R.string.tools))
                 }
@@ -414,10 +394,10 @@ fun BeadEditorScreen() {
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = boardScale
-                            scaleY = boardScale
-                            translationX = boardOffsetX
-                            translationY = boardOffsetY
+                            scaleX = uiState.boardScale
+                            scaleY = uiState.boardScale
+                            translationX = uiState.boardOffsetX
+                            translationY = uiState.boardOffsetY
                         }
                 ) {
                     if (templateImageUri != null) {
@@ -426,12 +406,12 @@ fun BeadEditorScreen() {
                             contentDescription = stringResource(R.string.template_image),
                             modifier = Modifier
                                 .fillMaxSize()
-                                .alpha(templateOpacity)
+                                .alpha(uiState.templateOpacity)
                                 .graphicsLayer {
-                                    scaleX = templateScale
-                                    scaleY = templateScale
-                                    translationX = templateOffsetX
-                                    translationY = templateOffsetY
+                                    scaleX = uiState.templateScale
+                                    scaleY = uiState.templateScale
+                                    translationX = uiState.templateOffsetX
+                                    translationY = uiState.templateOffsetY
                                 },
                             contentScale = ContentScale.Fit
                         )
@@ -443,10 +423,11 @@ fun BeadEditorScreen() {
                                 .fillMaxSize()
                                 .pointerInput(Unit) {
                                     detectTransformGestures { _, pan, zoom, _ ->
-                                        templateScale =
-                                            (templateScale * zoom).coerceIn(MinTemplateScale, MaxTemplateScale)
-                                        templateOffsetX += pan.x
-                                        templateOffsetY += pan.y
+                                        editorState.updateTemplateTransform(
+                                            panX = pan.x,
+                                            panY = pan.y,
+                                            zoom = zoom
+                                        )
                                     }
                                 }
                         )
@@ -460,20 +441,7 @@ fun BeadEditorScreen() {
                         colors = paletteColors,
                         stitchMode = stitchMode,
                         columns = gridColumns,
-                        onCellTap = { index ->
-                            if (templateAdjustMode || boardAdjustMode) {
-                                return@BeadGrid
-                            }
-                            val nextColor = if (eraserSelected) {
-                                EmptyBead
-                            } else {
-                                currentColorIndex
-                            }
-
-                            beads = beads.toMutableList().apply {
-                                this[index] = nextColor
-                            }
-                        }
+                        onCellTap = editorState::paintCell
                     )
                 }
 
@@ -483,10 +451,11 @@ fun BeadEditorScreen() {
                             .fillMaxSize()
                             .pointerInput(Unit) {
                                 detectTransformGestures { _, pan, zoom, _ ->
-                                    boardScale =
-                                        (boardScale * zoom).coerceIn(MinBoardScale, MaxBoardScale)
-                                    boardOffsetX += pan.x
-                                    boardOffsetY += pan.y
+                                    editorState.updateBoardTransform(
+                                        panX = pan.x,
+                                        panY = pan.y,
+                                        zoom = zoom
+                                    )
                                 }
                             }
                     )
@@ -497,22 +466,18 @@ fun BeadEditorScreen() {
         }
     }
 
-    if (showColorPickerDialog) {
+    if (uiState.showColorPickerDialog) {
         PalettePickerDialog(
             colors = paletteColors,
             selectedColorIndex = currentColorIndex,
-            onDismiss = { showColorPickerDialog = false },
-            onApply = { updatedSelection ->
-                selectedColorIndex = updatedSelection
-                eraserSelected = false
-                showColorPickerDialog = false
-            }
+            onDismiss = editorState::dismissColorPicker,
+            onApply = editorState::applySelectedColor
         )
     }
 
-    if (showToolsDialog) {
+    if (uiState.showToolsDialog) {
         AlertDialog(
-            onDismissRequest = { showToolsDialog = false },
+            onDismissRequest = editorState::dismissToolsDialog,
             properties = DialogProperties(
                 dismissOnBackPress = true,
                 dismissOnClickOutside = true
@@ -525,7 +490,7 @@ fun BeadEditorScreen() {
                 ) {
                     Text(text = stringResource(R.string.tools))
                     IconButton(
-                        onClick = { showToolsDialog = false }
+                        onClick = editorState::dismissToolsDialog
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Close,
@@ -541,10 +506,10 @@ fun BeadEditorScreen() {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(SpaceSm.dp)
                 ) {
-                    TabRow(selectedTabIndex = selectedToolsTab) {
+                    TabRow(selectedTabIndex = uiState.selectedToolsTab) {
                         Tab(
-                            selected = selectedToolsTab == 0,
-                            onClick = { selectedToolsTab = 0 },
+                            selected = uiState.selectedToolsTab == 0,
+                            onClick = { editorState.selectToolsTab(0) },
                             icon = {
                                 Icon(
                                     imageVector = Icons.Outlined.Image,
@@ -553,8 +518,8 @@ fun BeadEditorScreen() {
                             }
                         )
                         Tab(
-                            selected = selectedToolsTab == 1,
-                            onClick = { selectedToolsTab = 1 },
+                            selected = uiState.selectedToolsTab == 1,
+                            onClick = { editorState.selectToolsTab(1) },
                             icon = {
                                 Icon(
                                     imageVector = Icons.Outlined.Settings,
@@ -564,7 +529,7 @@ fun BeadEditorScreen() {
                         )
                     }
 
-                    when (selectedToolsTab) {
+                    when (uiState.selectedToolsTab) {
                         0 -> {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -576,7 +541,7 @@ fun BeadEditorScreen() {
                                         templatePicker.launch(
                                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                         )
-                                        showToolsDialog = false
+                                        editorState.dismissToolsDialog()
                                     },
                                     shape = ControlShape
                                 ) {
@@ -587,9 +552,9 @@ fun BeadEditorScreen() {
                                     onClick = {
                                         val captureUri = createTemplateCaptureUri(context)
                                         if (captureUri != null) {
-                                            pendingCameraUriString = captureUri.toString()
+                                            editorState.prepareCameraTemplateCapture(captureUri.toString())
                                             cameraTemplateCapture.launch(captureUri)
-                                            showToolsDialog = false
+                                            editorState.dismissToolsDialog()
                                         }
                                     },
                                     shape = ControlShape
@@ -599,15 +564,7 @@ fun BeadEditorScreen() {
                             }
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    templateImageUriString = null
-                                    templateScale = DefaultTemplateScale
-                                    templateOffsetX = 0f
-                                    templateOffsetY = 0f
-                                    if (interactionMode == InteractionModeTemplate) {
-                                        interactionMode = InteractionModePaint
-                                    }
-                                },
+                                onClick = editorState::removeTemplateImage,
                                 enabled = templateImageUri != null,
                                 shape = ControlShape
                             ) {
@@ -620,8 +577,8 @@ fun BeadEditorScreen() {
                                     style = MaterialTheme.typography.labelLarge
                                 )
                                 Slider(
-                                    value = templateOpacity,
-                                    onValueChange = { templateOpacity = it },
+                                    value = uiState.templateOpacity,
+                                    onValueChange = editorState::updateTemplateOpacity,
                                     valueRange = MinTemplateOpacity..1f
                                 )
                                 Row(
@@ -636,7 +593,7 @@ fun BeadEditorScreen() {
                                     Text(
                                         text = stringResource(
                                             R.string.current_template_opacity,
-                                            templateOpacity
+                                            uiState.templateOpacity
                                         ),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -654,14 +611,7 @@ fun BeadEditorScreen() {
                                 ) {
                                     OutlinedButton(
                                         modifier = Modifier.weight(1f),
-                                        onClick = {
-                                            interactionMode =
-                                                if (interactionMode == InteractionModeTemplate) {
-                                                    InteractionModePaint
-                                                } else {
-                                                    InteractionModeTemplate
-                                                }
-                                        },
+                                        onClick = editorState::toggleTemplateMode,
                                         shape = ControlShape
                                     ) {
                                         Text(
@@ -674,11 +624,7 @@ fun BeadEditorScreen() {
                                     }
                                     OutlinedButton(
                                         modifier = Modifier.weight(1f),
-                                        onClick = {
-                                            templateScale = DefaultTemplateScale
-                                            templateOffsetX = 0f
-                                            templateOffsetY = 0f
-                                        },
+                                        onClick = editorState::resetTemplateTransform,
                                         shape = ControlShape
                                     ) {
                                         Text(stringResource(R.string.reset))
@@ -700,20 +646,15 @@ fun BeadEditorScreen() {
                             ) {
                                 OutlinedButton(
                                     modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        beads = List(gridColumns * gridRows) { EmptyBead }
-                                    },
+                                    onClick = editorState::clearGrid,
+                                    enabled = !editorState.isGridEmpty,
                                     shape = ControlShape
                                 ) {
                                     Text(stringResource(R.string.clear_grid))
                                 }
                                 OutlinedButton(
                                     modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        boardScale = DefaultBoardScale
-                                        boardOffsetX = 0f
-                                        boardOffsetY = 0f
-                                    },
+                                    onClick = editorState::resetBoardTransform,
                                     shape = ControlShape
                                 ) {
                                     Text(stringResource(R.string.reset))
@@ -726,7 +667,7 @@ fun BeadEditorScreen() {
                             )
 
                             var stitchDropdownExpanded by rememberSaveable { mutableStateOf(false) }
-                            val selectedStitchMode = StitchMode.fromId(pendingSettingsStitchId)
+                            val selectedStitchMode = StitchMode.fromId(uiState.pendingSettingsStitchId)
 
                             ExposedDropdownMenuBox(
                                 expanded = stitchDropdownExpanded,
@@ -758,7 +699,7 @@ fun BeadEditorScreen() {
                                                 )
                                             },
                                             onClick = {
-                                                pendingSettingsStitchId = option.id
+                                                editorState.updatePendingStitch(option.id)
                                                 stitchDropdownExpanded = false
                                             },
                                             contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
@@ -770,15 +711,15 @@ fun BeadEditorScreen() {
                             Text(
                                 text = stringResource(
                                     R.string.grid_size,
-                                    pendingSettingsGridColumns.toInt(),
-                                    pendingSettingsGridRows.toInt()
+                                    uiState.pendingSettingsGridColumns.toInt(),
+                                    uiState.pendingSettingsGridRows.toInt()
                                 ),
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(stringResource(R.string.width))
                             Slider(
-                                value = pendingSettingsGridColumns,
-                                onValueChange = { pendingSettingsGridColumns = it },
+                                value = uiState.pendingSettingsGridColumns,
+                                onValueChange = editorState::updatePendingGridColumns,
                                 valueRange = MinGridSize.toFloat()..MaxGridSize.toFloat(),
                                 steps = MaxGridSize - MinGridSize - 1
                             )
@@ -794,7 +735,7 @@ fun BeadEditorScreen() {
                                 Text(
                                     text = stringResource(
                                         R.string.current_value,
-                                        pendingSettingsGridColumns.toInt()
+                                        uiState.pendingSettingsGridColumns.toInt()
                                     ),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -807,8 +748,8 @@ fun BeadEditorScreen() {
                             }
                             Text(stringResource(R.string.height))
                             Slider(
-                                value = pendingSettingsGridRows,
-                                onValueChange = { pendingSettingsGridRows = it },
+                                value = uiState.pendingSettingsGridRows,
+                                onValueChange = editorState::updatePendingGridRows,
                                 valueRange = MinGridSize.toFloat()..MaxGridSize.toFloat(),
                                 steps = MaxGridSize - MinGridSize - 1
                             )
@@ -824,7 +765,7 @@ fun BeadEditorScreen() {
                                 Text(
                                     text = stringResource(
                                         R.string.current_value,
-                                        pendingSettingsGridRows.toInt()
+                                        uiState.pendingSettingsGridRows.toInt()
                                     ),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -840,53 +781,27 @@ fun BeadEditorScreen() {
                 }
             },
             confirmButton = {
-                if (selectedToolsTab == 1) {
+                if (uiState.selectedToolsTab == 1) {
                     TextButton(
-                        onClick = {
-                            val updatedColumns = pendingSettingsGridColumns.toInt()
-                            val updatedRows = pendingSettingsGridRows.toInt()
-                            stitchModeId = StitchMode.fromId(pendingSettingsStitchId).id
-                            if (updatedColumns != gridColumns || updatedRows != gridRows) {
-                                gridColumns = updatedColumns
-                                gridRows = updatedRows
-                                beads = List(gridColumns * gridRows) { EmptyBead }
-                            }
-                            showToolsDialog = false
-                        }
+                        onClick = editorState::applyPendingGridSettings
                     ) {
                         Text(stringResource(R.string.apply))
                     }
                 } else {
-                    TextButton(onClick = { showToolsDialog = false }) {
+                    TextButton(onClick = editorState::dismissToolsDialog) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
             },
             dismissButton = {
-                if (selectedToolsTab == 1) {
-                    TextButton(onClick = { showToolsDialog = false }) {
+                if (uiState.selectedToolsTab == 1) {
+                    TextButton(onClick = editorState::dismissToolsDialog) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
             }
         )
     }
-}
-
-private fun createTemplateCaptureUri(context: Context): Uri? {
-    return runCatching {
-        val imageDirectory = File(context.cacheDir, "template_images").apply {
-            if (!exists()) mkdirs()
-        }
-        val imageFile = File(imageDirectory, "template_${UUID.randomUUID()}.jpg").apply {
-            createNewFile()
-        }
-        FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            imageFile
-        )
-    }.getOrNull()
 }
 
 @Composable
@@ -939,7 +854,9 @@ private fun PalettePickerDialog(
     onDismiss: () -> Unit,
     onApply: (Int) -> Unit
 ) {
-    var pendingSelection by rememberSaveable { mutableIntStateOf(selectedColorIndex) }
+    var pendingSelection by rememberSaveable(selectedColorIndex) {
+        mutableIntStateOf(selectedColorIndex)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
