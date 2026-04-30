@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -120,36 +122,54 @@ private fun BeadCell(
     modifier: Modifier = Modifier,
     onTap: () -> Unit
 ) {
+    val isDark = isSystemInDarkTheme()
     val outline = MaterialTheme.colorScheme.outline
+    val cellBackground = if (isDark) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    }
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
+            .padding(1.dp)
             .clip(BeadCellShape)
+            .background(cellBackground)
             .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
+                width = 0.5.dp,
+                color = if (isDark) outline.copy(alpha = 0.3f) else MaterialTheme.colorScheme.outlineVariant,
                 shape = BeadCellShape
             )
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(18.dp)) {
+            val radius = size.minDimension / 2.2f
             if (beadColor == null) {
+                // Empty "socket" look
                 drawCircle(
-                    color = outline.copy(alpha = 0.45f),
-                    radius = size.minDimension / 2,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                    color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
+                    radius = radius,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
                 )
             } else {
+                // Painted bead with slight depth
                 drawCircle(
                     color = beadColor,
-                    radius = size.minDimension / 2
+                    radius = radius
                 )
+                // Dark rim for contrast
                 drawCircle(
-                    color = outline.copy(alpha = 0.18f),
-                    radius = size.minDimension / 2,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                    color = Color.Black.copy(alpha = 0.15f),
+                    radius = radius,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                )
+                // Small highlight to give 3D feel
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.25f),
+                    radius = radius * 0.4f,
+                    center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
                 )
             }
         }

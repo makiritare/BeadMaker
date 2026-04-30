@@ -274,7 +274,21 @@ fun BeadEditorScreen() {
                         ),
                     onClick = { showColorPickerDialog = true },
                 ) {
-                    Spacer(modifier = Modifier.size(1.dp))
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        val radius = size.minDimension / 2.2f
+                        // Dark rim
+                        drawCircle(
+                            color = Color.Black.copy(alpha = 0.15f),
+                            radius = radius,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                        )
+                        // Small highlight
+                        drawCircle(
+                            color = Color.White.copy(alpha = 0.25f),
+                            radius = radius * 0.4f,
+                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+                        )
+                    }
                 }
 
             }
@@ -963,6 +977,21 @@ private fun PalettePickerDialog(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
+                            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                val radius = size.minDimension / 2.5f
+                                // Dark rim
+                                drawCircle(
+                                    color = Color.Black.copy(alpha = 0.15f),
+                                    radius = radius,
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
+                                )
+                                // Small highlight
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.25f),
+                                    radius = radius * 0.4f,
+                                    center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+                                )
+                            }
                             if (isSelected) {
                                 Box(
                                     modifier = Modifier
