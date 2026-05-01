@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,14 +41,22 @@ fun BeadGrid(
     stitchMode: StitchMode,
     beadShape: BeadShape,
     modifier: Modifier = Modifier,
+    boardScale: Float = 1f,
     columns: Int = 16,
     onCellTap: (index: Int) -> Unit
 ) {
     val safeColumns = columns.coerceAtLeast(1)
-    val gap = when (stitchMode) {
-        StitchMode.Square -> 6.dp
-        StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 7.dp
-        StitchMode.Brick -> 5.dp
+    val baseMaxGap = when (stitchMode) {
+        StitchMode.Square -> 4.dp
+        StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 4.dp
+        StitchMode.Brick -> 3.dp
+    }
+    val safeBoardScale = boardScale.coerceAtLeast(1f)
+    val maxGap = baseMaxGap / safeBoardScale
+    val gapRatio = when (stitchMode) {
+        StitchMode.Square -> 0.11f
+        StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 0.13f
+        StitchMode.Brick -> 0.1f
     }
     val offsetFactor = when (stitchMode) {
         StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 0.5f
@@ -65,12 +72,20 @@ fun BeadGrid(
     BoxWithConstraints(
         modifier = modifier.fillMaxSize()
     ) {
-        val evenBeadSize = (maxWidth - gap * (safeColumns - 1)) / safeColumns.toFloat()
-        val staggeredBeadSize =
-            (maxWidth - gap * ((safeColumns - 1) + offsetFactor)) / (safeColumns + offsetFactor)
+        val adaptiveEvenDenominator = safeColumns + (safeColumns - 1) * gapRatio
+        val adaptiveStaggeredDenominator =
+            (safeColumns + offsetFactor) + ((safeColumns - 1) + offsetFactor) * gapRatio
+        val adaptiveBeadSize = when (stitchMode.layoutStyle) {
+            StitchLayoutStyle.Staggered -> maxWidth / adaptiveStaggeredDenominator
+            else -> maxWidth / adaptiveEvenDenominator
+        }
+        val adaptiveGap = adaptiveBeadSize * gapRatio
+        val gap = minOf(adaptiveGap, maxGap)
         val beadSize = when (stitchMode.layoutStyle) {
-            StitchLayoutStyle.Staggered -> staggeredBeadSize
-            else -> evenBeadSize
+            StitchLayoutStyle.Staggered ->
+                (maxWidth - gap * ((safeColumns - 1) + offsetFactor)) / (safeColumns + offsetFactor)
+            else ->
+                (maxWidth - gap * (safeColumns - 1)) / safeColumns.toFloat()
         }
         val oddRowOffset = (beadSize + gap) * offsetFactor
 
@@ -157,7 +172,7 @@ private fun BeadCell(
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .padding(1.dp)
+            .padding(0.5.dp)
             .clip(cellShape)
             .background(cellBackground)
             .border(
@@ -168,7 +183,7 @@ private fun BeadCell(
             .clickable(onClick = onTap),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(18.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val shapeSize = size.minDimension * 0.9f
             val shapeRadius = shapeSize / 2f
             val rectWidth = size.width * 0.92f

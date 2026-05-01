@@ -30,10 +30,11 @@
     <string name="template_opacity_max">1.0</string>
     <string name="adjust_on">Ajuste: Activo</string>
     <string name="adjust_template">Ajustar plantilla</string>
-    <string name="reset">Restablecer</string>
+    <string name="reset">Reset</string>
     <string name="import_template_hint">Importa una imagen de plantilla para habilitar sus controles.</string>
     <string name="select_color">Seleccionar color</string>
     <string name="select_color_hint">Toca un color para pintar.</string>
+    <string name="recent_colors">Colores recientes</string>
     <string name="apply">Aplicar</string>
     <string name="undo">Deshacer</string>
     <string name="redo">Rehacer</string>
@@ -56,5 +57,11 @@
     <string name="grid_size">Tamaño de cuadrícula: %1$d x %2$d</string>
     <string name="width">Ancho</string>
     <string name="height">Alto</string>
+    <string name="add_columns_on">Agregar columnas en</string>
+    <string name="add_rows_on">Agregar filas en</string>
+    <string name="left">Izquierda</string>
+    <string name="right">Derecha</string>
+    <string name="top">Arriba</string>
+    <string name="bottom">Abajo</string>
     <string name="current_value">Actual: %1$d</string>
 </resources>

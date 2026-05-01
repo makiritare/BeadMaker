@@ -34,6 +34,7 @@
     <string name="import_template_hint">Import a template image to unlock template controls.</string>
     <string name="select_color">Select Color</string>
     <string name="select_color_hint">Tap one color to paint with.</string>
+    <string name="recent_colors">Recent colors</string>
     <string name="apply">Apply</string>
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
@@ -56,5 +57,11 @@
     <string name="grid_size">Grid size: %1$d x %2$d</string>
     <string name="width">Width</string>
     <string name="height">Height</string>
+    <string name="add_columns_on">Add columns on</string>
+    <string name="add_rows_on">Add rows on</string>
+    <string name="left">Left</string>
+    <string name="right">Right</string>
+    <string name="top">Top</string>
+    <string name="bottom">Bottom</string>
     <string name="current_value">Current: %1$d</string>
 </resources>

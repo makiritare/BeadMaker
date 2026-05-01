@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.Icons
@@ -13,6 +15,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.background
@@ -26,6 +30,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -35,9 +40,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +74,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,6 +90,8 @@ import com.example.beadmaker.ui.state.InteractionModeTemplate
 import com.example.beadmaker.ui.state.MaxGridSize
 import com.example.beadmaker.ui.state.MinGridSize
 import com.example.beadmaker.ui.state.MinTemplateOpacity
+import com.example.beadmaker.ui.state.GridHorizontalResizeDirection
+import com.example.beadmaker.ui.state.GridVerticalResizeDirection
 import com.example.beadmaker.ui.state.createTemplateCaptureUri
 import com.example.beadmaker.ui.state.rememberBeadEditorState
 import coil.compose.AsyncImage
@@ -94,6 +99,10 @@ import coil.compose.AsyncImage
 private const val SpaceXs = 8
 private const val SpaceSm = 12
 private const val SpaceMd = 16
+private const val PopupWidthFraction = 0.95f
+private const val CompactDropdownHeight = 54
+private const val CompactDropdownItemMinHeight = 42
+private const val CompactDirectionButtonHeight = 36
 
 private val ControlShape = RoundedCornerShape(14.dp)
 private val PaletteChipShape = RoundedCornerShape(12.dp)
@@ -482,6 +491,7 @@ fun BeadEditorScreen() {
                         colors = paletteColors,
                         stitchMode = stitchMode,
                         beadShape = beadShape,
+                        boardScale = uiState.boardScale,
                         columns = gridColumns,
                         onCellTap = editorState::paintCell
                     )
@@ -512,6 +522,7 @@ fun BeadEditorScreen() {
         PalettePickerDialog(
             colors = paletteColors,
             selectedColorIndex = currentColorIndex,
+            recentColorIndices = uiState.recentColorIndices,
             onDismiss = editorState::dismissColorPicker,
             onApply = editorState::applySelectedColor
         )
@@ -519,10 +530,12 @@ fun BeadEditorScreen() {
 
     if (uiState.showToolsDialog) {
         AlertDialog(
+            modifier = Modifier.fillMaxWidth(PopupWidthFraction),
             onDismissRequest = editorState::dismissToolsDialog,
             properties = DialogProperties(
                 dismissOnBackPress = true,
-                dismissOnClickOutside = true
+                dismissOnClickOutside = true,
+                usePlatformDefaultWidth = false
             ),
             title = {
                 Row(
@@ -546,7 +559,7 @@ fun BeadEditorScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(SpaceSm.dp)
+                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
                 ) {
                     TabRow(selectedTabIndex = uiState.selectedToolsTab) {
                         Tab(
@@ -724,7 +737,8 @@ fun BeadEditorScreen() {
                                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                                     modifier = Modifier
                                         .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                                        .fillMaxWidth(),
+                                        .fillMaxWidth()
+                                        .height(CompactDropdownHeight.dp),
                                     shape = ControlShape
                                 )
 
@@ -732,7 +746,14 @@ fun BeadEditorScreen() {
                                     expanded = stitchDropdownExpanded,
                                     onDismissRequest = { stitchDropdownExpanded = false }
                                 ) {
-                                    StitchMode.entries.forEach { option ->
+                                    StitchMode.entries
+                                        .sortedBy { option ->
+                                            when (option) {
+                                                StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 1
+                                                else -> 0
+                                            }
+                                        }
+                                        .forEach { option ->
                                         DropdownMenuItem(
                                             text = {
                                                 Text(
@@ -744,6 +765,7 @@ fun BeadEditorScreen() {
                                                 editorState.updatePendingStitch(option.id)
                                                 stitchDropdownExpanded = false
                                             },
+                                            modifier = Modifier.heightIn(min = CompactDropdownItemMinHeight.dp),
                                             contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                                         )
                                     }
@@ -771,7 +793,8 @@ fun BeadEditorScreen() {
                                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                                     modifier = Modifier
                                         .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                                        .fillMaxWidth(),
+                                        .fillMaxWidth()
+                                        .height(CompactDropdownHeight.dp),
                                     shape = ControlShape
                                 )
 
@@ -791,6 +814,7 @@ fun BeadEditorScreen() {
                                                 editorState.updatePendingBeadShape(option.id)
                                                 shapeDropdownExpanded = false
                                             },
+                                            modifier = Modifier.heightIn(min = CompactDropdownItemMinHeight.dp),
                                             contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                                         )
                                     }
@@ -805,66 +829,64 @@ fun BeadEditorScreen() {
                                 ),
                                 style = MaterialTheme.typography.titleSmall
                             )
-                            Text(stringResource(R.string.width))
+                            Text(
+                                text = "${stringResource(R.string.width)}: ${uiState.pendingSettingsGridColumns.toInt()}",
+                                style = MaterialTheme.typography.labelLarge
+                            )
                             Slider(
                                 value = uiState.pendingSettingsGridColumns,
                                 onValueChange = editorState::updatePendingGridColumns,
                                 valueRange = MinGridSize.toFloat()..MaxGridSize.toFloat(),
                                 steps = MaxGridSize - MinGridSize - 1
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "$MinGridSize",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = stringResource(
-                                        R.string.current_value,
-                                        uiState.pendingSettingsGridColumns.toInt()
-                                    ),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "$MaxGridSize",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Text(stringResource(R.string.height))
+                            ResizeDirectionToggle(
+                                label = stringResource(R.string.add_columns_on),
+                                firstContentDescription = stringResource(R.string.left),
+                                secondContentDescription = stringResource(R.string.right),
+                                firstIcon = Icons.AutoMirrored.Outlined.ArrowBack,
+                                secondIcon = Icons.AutoMirrored.Outlined.ArrowForward,
+                                firstSelected = uiState.pendingGridHorizontalResizeDirection ==
+                                    GridHorizontalResizeDirection.Left,
+                                onSelectFirst = {
+                                    editorState.updatePendingGridHorizontalResizeDirection(
+                                        GridHorizontalResizeDirection.Left
+                                    )
+                                },
+                                onSelectSecond = {
+                                    editorState.updatePendingGridHorizontalResizeDirection(
+                                        GridHorizontalResizeDirection.Right
+                                    )
+                                }
+                            )
+                            Text(
+                                text = "${stringResource(R.string.height)}: ${uiState.pendingSettingsGridRows.toInt()}",
+                                style = MaterialTheme.typography.labelLarge
+                            )
                             Slider(
                                 value = uiState.pendingSettingsGridRows,
                                 onValueChange = editorState::updatePendingGridRows,
                                 valueRange = MinGridSize.toFloat()..MaxGridSize.toFloat(),
                                 steps = MaxGridSize - MinGridSize - 1
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "$MinGridSize",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = stringResource(
-                                        R.string.current_value,
-                                        uiState.pendingSettingsGridRows.toInt()
-                                    ),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "$MaxGridSize",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            ResizeDirectionToggle(
+                                label = stringResource(R.string.add_rows_on),
+                                firstContentDescription = stringResource(R.string.top),
+                                secondContentDescription = stringResource(R.string.bottom),
+                                firstIcon = Icons.Outlined.KeyboardArrowUp,
+                                secondIcon = Icons.Outlined.KeyboardArrowDown,
+                                firstSelected = uiState.pendingGridVerticalResizeDirection ==
+                                    GridVerticalResizeDirection.Top,
+                                onSelectFirst = {
+                                    editorState.updatePendingGridVerticalResizeDirection(
+                                        GridVerticalResizeDirection.Top
+                                    )
+                                },
+                                onSelectSecond = {
+                                    editorState.updatePendingGridVerticalResizeDirection(
+                                        GridVerticalResizeDirection.Bottom
+                                    )
+                                }
+                            )
                         }
                     }
                 }
@@ -894,7 +916,9 @@ fun BeadEditorScreen() {
 
     if (showFileActionsDialog) {
         AlertDialog(
+            modifier = Modifier.fillMaxWidth(PopupWidthFraction),
             onDismissRequest = { showFileActionsDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = { Text(text = stringResource(R.string.file_actions)) },
             text = {
                 Column(
@@ -1005,9 +1029,94 @@ private fun ModeIconButton(
 }
 
 @Composable
+private fun ResizeDirectionToggle(
+    label: String,
+    firstContentDescription: String,
+    secondContentDescription: String,
+    firstIcon: ImageVector,
+    secondIcon: ImageVector,
+    firstSelected: Boolean,
+    onSelectFirst: () -> Unit,
+    onSelectSecond: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
+    ) {
+        Text(
+            modifier = Modifier.weight(1f),
+            text = label,
+            style = MaterialTheme.typography.titleSmall
+        )
+        Row(
+            modifier = Modifier.weight(1.4f),
+            horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
+        ) {
+            if (firstSelected) {
+                Button(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(CompactDirectionButtonHeight.dp),
+                    onClick = onSelectFirst,
+                    shape = ControlShape
+                ) {
+                    Icon(
+                        imageVector = firstIcon,
+                        contentDescription = firstContentDescription
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(CompactDirectionButtonHeight.dp),
+                    onClick = onSelectFirst,
+                    shape = ControlShape
+                ) {
+                    Icon(
+                        imageVector = firstIcon,
+                        contentDescription = firstContentDescription
+                    )
+                }
+            }
+
+            if (!firstSelected) {
+                Button(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(CompactDirectionButtonHeight.dp),
+                    onClick = onSelectSecond,
+                    shape = ControlShape
+                ) {
+                    Icon(
+                        imageVector = secondIcon,
+                        contentDescription = secondContentDescription
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(CompactDirectionButtonHeight.dp),
+                    onClick = onSelectSecond,
+                    shape = ControlShape
+                ) {
+                    Icon(
+                        imageVector = secondIcon,
+                        contentDescription = secondContentDescription
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun PalettePickerDialog(
     colors: List<Color>,
     selectedColorIndex: Int,
+    recentColorIndices: List<Int>,
     onDismiss: () -> Unit,
     onApply: (Int) -> Unit
 ) {
@@ -1016,67 +1125,161 @@ private fun PalettePickerDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.fillMaxWidth(PopupWidthFraction),
         onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         title = { Text(stringResource(R.string.select_color)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
+            ) {
                 Text(
                     text = stringResource(R.string.select_color_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(6),
-                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp),
-                    horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp),
-                    modifier = Modifier.height(220.dp)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
                 ) {
-                    itemsIndexed(colors) { index, color ->
-                        val isSelected = pendingSelection == index
-                        Box(
-                            modifier = Modifier
-                                .aspectRatio(1f)
-                                .clip(PaletteChipShape)
-                                .background(color)
-                                .border(
-                                    width = if (isSelected) 4.dp else 1.dp,
-                                    color = if (isSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.outlineVariant
-                                    },
-                                    shape = PaletteChipShape
-                                )
-                                .clickable {
-                                    pendingSelection = index
-                                },
-                            contentAlignment = Alignment.Center
+                    colors.chunked(6).forEachIndexed { rowIndex, rowColors ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
                         ) {
-                            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                                val radius = size.minDimension / 2.5f
-                                // Dark rim
-                                drawCircle(
-                                    color = Color.Black.copy(alpha = 0.15f),
-                                    radius = radius,
-                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
-                                )
-                                // Small highlight
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.25f),
-                                    radius = radius * 0.4f,
-                                    center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-                                )
-                            }
-                            if (isSelected) {
+                            rowColors.forEachIndexed { columnIndex, color ->
+                                val colorIndex = rowIndex * 6 + columnIndex
+                                val isSelected = pendingSelection == colorIndex
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(4.dp)
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(PaletteChipShape)
+                                        .background(color)
                                         .border(
-                                            width = 1.dp,
-                                            color = MaterialTheme.colorScheme.surface,
-                                            shape = PaletteChipInsetShape
+                                            width = if (isSelected) 4.dp else 1.dp,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.outlineVariant
+                                            },
+                                            shape = PaletteChipShape
                                         )
+                                        .clickable {
+                                            pendingSelection = colorIndex
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val radius = size.minDimension / 2.5f
+                                        drawCircle(
+                                            color = Color.Black.copy(alpha = 0.15f),
+                                            radius = radius,
+                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
+                                        )
+                                        drawCircle(
+                                            color = Color.White.copy(alpha = 0.25f),
+                                            radius = radius * 0.4f,
+                                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(4.dp)
+                                                .border(
+                                                    width = 1.dp,
+                                                    color = MaterialTheme.colorScheme.surface,
+                                                    shape = PaletteChipInsetShape
+                                                )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = stringResource(R.string.recent_colors),
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
+                ) {
+                    repeat(6) { slot ->
+                        val colorIndex = recentColorIndices.getOrNull(slot)
+                        if (colorIndex == null) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1f)
+                                    .clip(PaletteChipShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                                        shape = PaletteChipShape
+                                    )
+                            )
+                        } else {
+                            val color = colors.getOrNull(colorIndex)
+                            if (color != null) {
+                                val isSelected = pendingSelection == colorIndex
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(PaletteChipShape)
+                                        .background(color)
+                                        .border(
+                                            width = if (isSelected) 4.dp else 1.dp,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.outlineVariant
+                                            },
+                                            shape = PaletteChipShape
+                                        )
+                                        .clickable {
+                                            pendingSelection = colorIndex
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val radius = size.minDimension / 2.5f
+                                        drawCircle(
+                                            color = Color.Black.copy(alpha = 0.15f),
+                                            radius = radius,
+                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
+                                        )
+                                        drawCircle(
+                                            color = Color.White.copy(alpha = 0.25f),
+                                            radius = radius * 0.4f,
+                                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(4.dp)
+                                                .border(
+                                                    width = 1.dp,
+                                                    color = MaterialTheme.colorScheme.surface,
+                                                    shape = PaletteChipInsetShape
+                                                )
+                                        )
+                                    }
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
                                 )
                             }
                         }

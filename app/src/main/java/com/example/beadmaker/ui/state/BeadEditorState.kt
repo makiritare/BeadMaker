@@ -42,6 +42,17 @@ const val InteractionModeGrid = 2
 private const val MaxUndoStackSize = 30
 private const val SavedPatternFileName = "saved_pattern.bm"
 private const val PatternFormatVersion = 1
+private const val MaxRecentColors = 6
+
+enum class GridHorizontalResizeDirection {
+    Left,
+    Right
+}
+
+enum class GridVerticalResizeDirection {
+    Top,
+    Bottom
+}
 
 data class EditorUiState(
     val gridColumns: Int = DefaultGridColumns,
@@ -50,6 +61,7 @@ data class EditorUiState(
     val beadShapeId: String = BeadShape.defaults.id,
     val beads: List<Int> = List(DefaultGridColumns * DefaultGridRows) { EmptyBead },
     val selectedColorIndex: Int = 0,
+    val recentColorIndices: List<Int> = listOf(0),
     val eraserSelected: Boolean = false,
     val templateImageUriString: String? = null,
     val templateOpacity: Float = DefaultTemplateOpacity,
@@ -67,7 +79,11 @@ data class EditorUiState(
     val pendingSettingsStitchId: String = StitchMode.defaults.id,
     val pendingSettingsBeadShapeId: String = BeadShape.defaults.id,
     val pendingSettingsGridColumns: Float = DefaultGridColumns.toFloat(),
-    val pendingSettingsGridRows: Float = DefaultGridRows.toFloat()
+    val pendingSettingsGridRows: Float = DefaultGridRows.toFloat(),
+    val pendingGridHorizontalResizeDirection: GridHorizontalResizeDirection =
+        GridHorizontalResizeDirection.Right,
+    val pendingGridVerticalResizeDirection: GridVerticalResizeDirection =
+        GridVerticalResizeDirection.Bottom
 )
 
 data class BoardSnapshot(
@@ -113,6 +129,7 @@ class BeadEditorState(
     fun applySelectedColor(index: Int) {
         uiState = uiState.copy(
             selectedColorIndex = index,
+            recentColorIndices = updateRecentColors(uiState.recentColorIndices, index),
             eraserSelected = false,
             showColorPickerDialog = false
         )
@@ -150,6 +167,8 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = uiState.beadShapeId,
             pendingSettingsGridColumns = uiState.gridColumns.toFloat(),
             pendingSettingsGridRows = uiState.gridRows.toFloat(),
+            pendingGridHorizontalResizeDirection = GridHorizontalResizeDirection.Right,
+            pendingGridVerticalResizeDirection = GridVerticalResizeDirection.Bottom,
             showToolsDialog = true
         )
     }
@@ -319,6 +338,14 @@ class BeadEditorState(
         uiState = uiState.copy(pendingSettingsGridRows = value)
     }
 
+    fun updatePendingGridHorizontalResizeDirection(direction: GridHorizontalResizeDirection) {
+        uiState = uiState.copy(pendingGridHorizontalResizeDirection = direction)
+    }
+
+    fun updatePendingGridVerticalResizeDirection(direction: GridVerticalResizeDirection) {
+        uiState = uiState.copy(pendingGridVerticalResizeDirection = direction)
+    }
+
     fun applyPendingGridSettings() {
         val updatedColumns = uiState.pendingSettingsGridColumns.toInt()
         val updatedRows = uiState.pendingSettingsGridRows.toInt()
@@ -343,7 +370,9 @@ class BeadEditorState(
                     oldColumns = uiState.gridColumns,
                     oldRows = uiState.gridRows,
                     newColumns = updatedColumns,
-                    newRows = updatedRows
+                    newRows = updatedRows,
+                    horizontalDirection = uiState.pendingGridHorizontalResizeDirection,
+                    verticalDirection = uiState.pendingGridVerticalResizeDirection
                 )
             } else {
                 uiState.beads
@@ -456,7 +485,10 @@ class BeadEditorState(
                     state.uiState.pendingSettingsGridColumns,
                     state.uiState.pendingSettingsGridRows,
                     state.uiState.beadShapeId,
-                    state.uiState.pendingSettingsBeadShapeId
+                    state.uiState.pendingSettingsBeadShapeId,
+                    state.uiState.pendingGridHorizontalResizeDirection.name,
+                    state.uiState.pendingGridVerticalResizeDirection.name,
+                    ArrayList(state.uiState.recentColorIndices)
                 )
             },
             restore = { restored ->
@@ -470,6 +502,10 @@ class BeadEditorState(
                         beadShapeId = restored.getOrNull(22) as? String ?: BeadShape.defaults.id,
                         beads = restored[3] as ArrayList<Int>,
                         selectedColorIndex = restored[4] as Int,
+                        recentColorIndices = ((restored.getOrNull(26) as? ArrayList<*>)?.mapNotNull {
+                            (it as? Int)?.takeIf { index -> index >= 0 }
+                        }?.distinct()?.take(MaxRecentColors)?.takeIf { it.isNotEmpty() })
+                            ?: listOf((restored[4] as Int).coerceAtLeast(0)),
                         eraserSelected = restored[5] as Boolean,
                         templateImageUriString = restored[6] as String?,
                         templateOpacity = restored[7] as Float,
@@ -488,7 +524,15 @@ class BeadEditorState(
                         pendingSettingsGridColumns = restored[20] as Float,
                         pendingSettingsGridRows = restored[21] as Float,
                         pendingSettingsBeadShapeId = restored.getOrNull(23) as? String
-                            ?: BeadShape.defaults.id
+                            ?: BeadShape.defaults.id,
+                        pendingGridHorizontalResizeDirection =
+                            (restored.getOrNull(24) as? String)?.let {
+                                runCatching { GridHorizontalResizeDirection.valueOf(it) }.getOrNull()
+                            } ?: GridHorizontalResizeDirection.Right,
+                        pendingGridVerticalResizeDirection =
+                            (restored.getOrNull(25) as? String)?.let {
+                                runCatching { GridVerticalResizeDirection.valueOf(it) }.getOrNull()
+                            } ?: GridVerticalResizeDirection.Bottom
                     )
                 )
             }
@@ -552,20 +596,57 @@ fun resizeBeadGrid(
     oldColumns: Int,
     oldRows: Int,
     newColumns: Int,
-    newRows: Int
+    newRows: Int,
+    horizontalDirection: GridHorizontalResizeDirection = GridHorizontalResizeDirection.Right,
+    verticalDirection: GridVerticalResizeDirection = GridVerticalResizeDirection.Bottom
 ): List<Int> {
     val resizedBeads = MutableList(newColumns * newRows) { EmptyBead }
     val preservedColumns = minOf(oldColumns, newColumns)
     val preservedRows = minOf(oldRows, newRows)
+    val sourceStartColumn = when (horizontalDirection) {
+        GridHorizontalResizeDirection.Right -> 0
+        GridHorizontalResizeDirection.Left -> oldColumns - preservedColumns
+    }
+    val targetStartColumn = when (horizontalDirection) {
+        GridHorizontalResizeDirection.Right -> 0
+        GridHorizontalResizeDirection.Left -> newColumns - preservedColumns
+    }
+    val sourceStartRow = when (verticalDirection) {
+        GridVerticalResizeDirection.Bottom -> 0
+        GridVerticalResizeDirection.Top -> oldRows - preservedRows
+    }
+    val targetStartRow = when (verticalDirection) {
+        GridVerticalResizeDirection.Bottom -> 0
+        GridVerticalResizeDirection.Top -> newRows - preservedRows
+    }
 
     repeat(preservedRows) { rowIndex ->
         repeat(preservedColumns) { columnIndex ->
-            resizedBeads[rowIndex * newColumns + columnIndex] =
-                beads[rowIndex * oldColumns + columnIndex]
+            val sourceIndex =
+                (sourceStartRow + rowIndex) * oldColumns + (sourceStartColumn + columnIndex)
+            val targetIndex =
+                (targetStartRow + rowIndex) * newColumns + (targetStartColumn + columnIndex)
+            resizedBeads[targetIndex] = beads[sourceIndex]
         }
     }
 
     return resizedBeads
+}
+
+fun updateRecentColors(
+    existing: List<Int>,
+    selectedIndex: Int,
+    maxSize: Int = MaxRecentColors
+): List<Int> {
+    if (maxSize <= 0 || selectedIndex < 0) return existing
+    return buildList {
+        add(selectedIndex)
+        existing.forEach { index ->
+            if (index >= 0 && index != selectedIndex && size < maxSize) {
+                add(index)
+            }
+        }
+    }
 }
 
 fun updateBeadAt(

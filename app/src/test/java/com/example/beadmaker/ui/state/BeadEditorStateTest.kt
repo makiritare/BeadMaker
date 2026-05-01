@@ -34,6 +34,94 @@ class BeadEditorStateTest {
     }
 
     @Test
+    fun resizeBeadGrid_addsColumnsOnLeft_whenRequested() {
+        val beads = listOf(
+            1, 2, 3,
+            4, 5, 6
+        )
+
+        val resized = resizeBeadGrid(
+            beads = beads,
+            oldColumns = 3,
+            oldRows = 2,
+            newColumns = 4,
+            newRows = 2,
+            horizontalDirection = GridHorizontalResizeDirection.Left
+        )
+
+        assertEquals(
+            listOf(
+                EmptyBead, 1, 2, 3,
+                EmptyBead, 4, 5, 6
+            ),
+            resized
+        )
+    }
+
+    @Test
+    fun resizeBeadGrid_addsRowsOnTop_whenRequested() {
+        val beads = listOf(
+            1, 2, 3,
+            4, 5, 6
+        )
+
+        val resized = resizeBeadGrid(
+            beads = beads,
+            oldColumns = 3,
+            oldRows = 2,
+            newColumns = 3,
+            newRows = 3,
+            verticalDirection = GridVerticalResizeDirection.Top
+        )
+
+        assertEquals(
+            listOf(
+                EmptyBead, EmptyBead, EmptyBead,
+                1, 2, 3,
+                4, 5, 6
+            ),
+            resized
+        )
+    }
+
+    @Test
+    fun resizeBeadGrid_shrinksFromTopAndLeft_whenTopLeftSelected() {
+        val beads = listOf(
+            1, 2, 3,
+            4, 5, 6,
+            7, 8, 9
+        )
+
+        val resized = resizeBeadGrid(
+            beads = beads,
+            oldColumns = 3,
+            oldRows = 3,
+            newColumns = 2,
+            newRows = 2,
+            horizontalDirection = GridHorizontalResizeDirection.Left,
+            verticalDirection = GridVerticalResizeDirection.Top
+        )
+
+        assertEquals(
+            listOf(
+                5, 6,
+                8, 9
+            ),
+            resized
+        )
+    }
+
+    @Test
+    fun updateRecentColors_movesSelectedToFront_andCapsToSix() {
+        val updated = updateRecentColors(
+            existing = listOf(2, 4, 6, 8, 10, 12),
+            selectedIndex = 8
+        )
+
+        assertEquals(listOf(8, 2, 4, 6, 10, 12), updated)
+    }
+
+    @Test
     fun updateBeadAt_returnsSameListForNoOp() {
         val beads = listOf(1, 2, 3)
 
