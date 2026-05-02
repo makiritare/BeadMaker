@@ -46,18 +46,6 @@ fun BeadGrid(
     onCellTap: (index: Int) -> Unit
 ) {
     val safeColumns = columns.coerceAtLeast(1)
-    val baseMaxGap = when (stitchMode) {
-        StitchMode.Square -> 4.dp
-        StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 4.dp
-        StitchMode.Brick -> 3.dp
-    }
-    val safeBoardScale = boardScale.coerceAtLeast(1f)
-    val maxGap = baseMaxGap / safeBoardScale
-    val gapRatio = when (stitchMode) {
-        StitchMode.Square -> 0.11f
-        StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 0.13f
-        StitchMode.Brick -> 0.1f
-    }
     val offsetFactor = when (stitchMode) {
         StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 0.5f
         StitchMode.Brick -> 0.58f
@@ -72,26 +60,15 @@ fun BeadGrid(
     BoxWithConstraints(
         modifier = modifier.fillMaxSize()
     ) {
-        val adaptiveEvenDenominator = safeColumns + (safeColumns - 1) * gapRatio
-        val adaptiveStaggeredDenominator =
-            (safeColumns + offsetFactor) + ((safeColumns - 1) + offsetFactor) * gapRatio
-        val adaptiveBeadSize = when (stitchMode.layoutStyle) {
-            StitchLayoutStyle.Staggered -> maxWidth / adaptiveStaggeredDenominator
-            else -> maxWidth / adaptiveEvenDenominator
-        }
-        val adaptiveGap = adaptiveBeadSize * gapRatio
-        val gap = minOf(adaptiveGap, maxGap)
         val beadSize = when (stitchMode.layoutStyle) {
             StitchLayoutStyle.Staggered ->
-                (maxWidth - gap * ((safeColumns - 1) + offsetFactor)) / (safeColumns + offsetFactor)
+                maxWidth / (safeColumns + offsetFactor)
             else ->
-                (maxWidth - gap * (safeColumns - 1)) / safeColumns.toFloat()
+                maxWidth / safeColumns.toFloat()
         }
-        val oddRowOffset = (beadSize + gap) * offsetFactor
+        val oddRowOffset = beadSize * offsetFactor
 
-        Column(
-            verticalArrangement = Arrangement.spacedBy(gap)
-        ) {
+        Column {
             beads.chunked(safeColumns).forEachIndexed { rowIndex, row ->
                 val isStaggeredRow = (rowIndex / groupSize) % 2 == 1
                 val rowOffset = when (stitchMode.layoutStyle) {
@@ -101,13 +78,13 @@ fun BeadGrid(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
                         .background(
                             if (stitchMode.layoutStyle == StitchLayoutStyle.Staggered && isStaggeredRow) {
                                 MaterialTheme.colorScheme.primary.copy(alpha = 0.055f)
                             } else {
                                 Color.Transparent
-                            }
+                            },
+                            shape = RoundedCornerShape(10.dp)
                         )
                 ) {
                     Row(
@@ -118,9 +95,6 @@ fun BeadGrid(
                             Spacer(modifier = Modifier.width(rowOffset))
                         }
                         row.forEachIndexed { columnIndex, beadColorIndex ->
-                            if (columnIndex > 0) {
-                                Spacer(modifier = Modifier.width(gap))
-                            }
                             val beadIndex = rowIndex * safeColumns + columnIndex
                             BeadCell(
                                 beadColor = beadColorIndex
@@ -147,6 +121,16 @@ private fun BeadCell(
 ) {
     val isDark = isSystemInDarkTheme()
     val outline = MaterialTheme.colorScheme.outline
+    val emptyBeadOutlineColor = if (isDark) {
+        Color.White.copy(alpha = 0.42f)
+    } else {
+        outline.copy(alpha = 0.5f)
+    }
+    val paintedBeadRimColor = if (isDark) {
+        Color.White.copy(alpha = 0.32f)
+    } else {
+        Color.White.copy(alpha = 0.42f)
+    }
     val cellShape = when (beadShape) {
         BeadShape.Circle -> BeadCellCircleShape
         BeadShape.RoundedRectangle -> BeadCellRoundedRectShape
@@ -162,9 +146,9 @@ private fun BeadCell(
     }
     val cellBorderColor = when (beadShape) {
         BeadShape.Circle -> if (isDark) {
-            outline.copy(alpha = 0.3f)
+            Color.White.copy(alpha = 0.22f)
         } else {
-            MaterialTheme.colorScheme.outlineVariant
+            Color.White.copy(alpha = 0.6f)
         }
         BeadShape.RoundedRectangle -> Color.Transparent
     }
@@ -172,7 +156,6 @@ private fun BeadCell(
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .padding(0.5.dp)
             .clip(cellShape)
             .background(cellBackground)
             .border(
@@ -198,13 +181,13 @@ private fun BeadCell(
                 // Empty "socket" look
                 when (beadShape) {
                     BeadShape.Circle -> drawCircle(
-                        color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
+                        color = emptyBeadOutlineColor,
                         radius = shapeRadius,
                         style = emptyStroke
                     )
 
                     BeadShape.RoundedRectangle -> drawRoundRect(
-                        color = outline.copy(alpha = if (isDark) 0.5f else 0.35f),
+                        color = emptyBeadOutlineColor,
                         topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
                         size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
                         cornerRadius = rectCorner,
@@ -219,9 +202,8 @@ private fun BeadCell(
                             color = beadColor,
                             radius = shapeRadius
                         )
-                        // Dark rim for contrast
                         drawCircle(
-                            color = Color.Black.copy(alpha = 0.15f),
+                            color = paintedBeadRimColor,
                             radius = shapeRadius,
                             style = rimStroke
                         )
@@ -235,7 +217,7 @@ private fun BeadCell(
                             cornerRadius = rectCorner
                         )
                         drawRoundRect(
-                            color = Color.Black.copy(alpha = 0.15f),
+                            color = paintedBeadRimColor,
                             topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
                             size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
                             cornerRadius = rectCorner,
