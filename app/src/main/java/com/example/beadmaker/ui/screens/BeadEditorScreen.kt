@@ -467,22 +467,6 @@ fun BeadEditorScreen() {
                         )
                     }
 
-                    if (templateImageUri != null && templateAdjustMode) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        editorState.updateTemplateTransform(
-                                            panX = pan.x,
-                                            panY = pan.y,
-                                            zoom = zoom
-                                        )
-                                    }
-                                }
-                        )
-                    }
-
                     BeadGrid(
                         modifier = Modifier
                             .fillMaxSize()
@@ -497,17 +481,26 @@ fun BeadEditorScreen() {
                     )
                 }
 
-                if (boardAdjustMode) {
+                if ((templateImageUri != null && templateAdjustMode) || boardAdjustMode) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .pointerInput(Unit) {
-                                detectTransformGestures { _, pan, zoom, _ ->
-                                    editorState.updateBoardTransform(
-                                        panX = pan.x,
-                                        panY = pan.y,
-                                        zoom = zoom
-                                    )
+                            // Keep the transform layer on top so grid taps do not steal the gesture.
+                            .pointerInput(templateAdjustMode, boardAdjustMode, templateImageUri) {
+                                detectTransformGestures(panZoomLock = true) { _, pan, zoom, _ ->
+                                    if (templateImageUri != null && templateAdjustMode) {
+                                        editorState.updateTemplateTransform(
+                                            panX = pan.x,
+                                            panY = pan.y,
+                                            zoom = zoom
+                                        )
+                                    } else if (boardAdjustMode) {
+                                        editorState.updateBoardTransform(
+                                            panX = pan.x,
+                                            panY = pan.y,
+                                            zoom = zoom
+                                        )
+                                    }
                                 }
                             }
                     )
