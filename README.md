@@ -1,5 +1,7 @@
 # BeadMaker
 
+Version en espanol: [README en español](#readme-en-espanol)
+
 BeadMaker is an Android beadweaving pattern editor built with Jetpack Compose. It focuses on fast sketching, stitch-aware layouts, template-assisted tracing, and local-first pattern storage in a single-screen workflow that works well on phones and tablets.
 
 ## Overview
@@ -184,3 +186,190 @@ It does not currently include:
 ## License
 
 Released under the MIT License. See [LICENSE](LICENSE).
+
+## README en espanol
+
+BeadMaker es un editor de patrones de tejido con cuentas para Android, construido con Jetpack Compose. Se centra en el bocetado rapido, los diseños adaptados al tipo de puntada, el calco asistido con plantillas y el almacenamiento local en un flujo de una sola pantalla que funciona bien en telefonos y tablets.
+
+### Resumen
+
+La aplicacion esta pensada para planificar patrones directamente en el dispositivo:
+
+- Pintar patrones sobre una cuadricula configurable.
+- Cambiar entre diseños cuadrados, peyote y tipo brick.
+- Calcar una foto o una imagen de referencia importada con opacidad ajustable.
+- Mover y hacer zoom sobre la capa de plantilla o sobre el tablero.
+- Guardar un borrador local o exportar un archivo de patron `.bm`.
+
+No requiere cuenta, sincronizacion en red ni servicios backend.
+
+### Funciones
+
+#### Diseños de puntada
+
+- Cuadricula cuadrada
+- Peyote (1-Drop)
+- Peyote (2-Drop)
+- Peyote (3-Drop)
+- Cuadricula brick
+
+Los diseños escalonados se renderizan con desplazamientos por fila para que el editor coincida con la estructura real de la puntada y no trate todo como si fuera pixel art.
+
+#### Herramientas de edicion
+
+- Toque para pintar celdas en modo pintura
+- Alternar borrador para correcciones rapidas
+- Undo y redo para cambios del tablero y de la cuadricula
+- Franja de colores recientes dentro del dialogo de paleta
+- Dos estilos de cuenta: `Circle` y `Rounded rectangle`
+
+#### Controles de cuadricula
+
+- Tamano ajustable de `8x8` a `64x64`
+- Deslizadores independientes para ancho y alto
+- Anclaje de redimensionado desde izquierda o derecha, y desde arriba o abajo
+- Conservacion de cuentas existentes al redimensionar cuando coinciden los limites
+- Accion para limpiar la cuadricula
+
+#### Flujo de plantilla
+
+- Importar una imagen desde el selector de fotos del sistema
+- Tomar una foto con la camara del dispositivo
+- Ajustar la opacidad de la plantilla entre `0.1` y `1.0`
+- Entrar en modo de ajuste para mover la imagen y hacer pinch-to-zoom
+- Quitar o reiniciar la transformacion de la plantilla en cualquier momento
+
+Las imagenes de plantilla se copian al cache de la app para que el editor pueda seguir usandolas despues de importarlas.
+
+#### Navegacion del tablero
+
+- Modo separado para ajustar el tablero con paneo y zoom
+- Pinch-to-zoom con soporte de desplazamiento
+- Reinicio de la transformacion del tablero
+
+#### Acciones de archivo
+
+- `Save`: escribe el estado actual del tablero en el almacenamiento privado de la app
+- `Load`: restaura ese guardado rapido interno
+- `Export`: escribe el patron actual en un archivo `.bm` mediante el selector de documentos de Android
+
+`Save` y `Load` funcionan como una ranura de guardado rapido local. `Export` genera un archivo de texto portable pensado para compartir, respaldar o usar con futuras herramientas.
+
+#### UI y calidad de vida
+
+- UI en Compose Material 3
+- Esquemas de color claros y oscuros personalizados
+- Diseño edge-to-edge
+- Recursos de texto en ingles y espanol
+- Restauracion de estado local entre cambios de configuracion mediante `rememberSaveable`
+
+### Como usar
+
+1. Elige un color desde el boton de color en la barra superior.
+2. Toca las celdas en modo `Paint` para construir el patron.
+3. Abre `Tools` para cambiar el tipo de puntada, la forma de la cuenta o las dimensiones de la cuadricula.
+4. Importa una plantilla o toma una foto si quieres calcar una referencia.
+5. Cambia a modo `Template` para alinear la imagen detras de la cuadricula.
+6. Cambia a modo `Grid` si necesitas reposicionar o hacer zoom del tablero completo.
+7. Usa `Files` para guardar, cargar o exportar el patron.
+
+### Formato de patron
+
+Los patrones exportados usan un formato de texto plano UTF-8 con extension `.bm`. El archivo guarda:
+
+- version del formato
+- ancho y alto de la cuadricula
+- identificador del modo de puntada
+- identificador de la forma de la cuenta
+- indices de color de las cuentas en una lista aplanada
+
+Version actual del formato: `1`
+
+Ejemplo:
+
+```text
+beadmaker_format=1
+grid_columns=16
+grid_rows=16
+stitch_mode_id=square
+bead_shape_id=circle
+beads=-1,-1,0,0,...
+```
+
+`-1` representa una celda vacia.
+
+### Stack tecnico
+
+- Kotlin
+- Jetpack Compose
+- Material 3
+- Coil Compose
+- APIs de resultados de actividad de AndroidX
+- FileProvider para la salida de captura de camara
+
+### Estructura del proyecto
+
+- `app/src/main/java/com/example/beadmaker/MainActivity.kt`: punto de entrada y tema de la app
+- `app/src/main/java/com/example/beadmaker/ui/screens/BeadEditorScreen.kt`: UI principal del editor
+- `app/src/main/java/com/example/beadmaker/ui/state/BeadEditorState.kt`: estado del editor, persistencia, logica de redimensionado y formato de exportacion
+- `app/src/main/java/com/example/beadmaker/ui/components/BeadGrid.kt`: renderizado de cuadricula segun el tipo de puntada
+- `app/src/test/java/com/example/beadmaker/ui/state/BeadEditorStateTest.kt`: pruebas unitarias para redimensionado y serializacion
+
+### Requisitos
+
+- Android Studio con Android SDK `36`
+- Dispositivo Android o emulador con Android `7.0` o superior (`minSdk 24`)
+- Soporte de Gradle para:
+  - Android Gradle Plugin `9.2.0`
+  - Kotlin Compose plugin `2.2.20`
+
+Usar el JDK incluido en las versiones actuales de Android Studio es la opcion mas segura.
+
+### Compilar y ejecutar
+
+#### Android Studio
+
+1. Clona el repositorio:
+
+   ```bash
+   git clone https://github.com/makiritare/BeadMaker.git
+   cd BeadMaker
+   ```
+
+2. Abre el proyecto en Android Studio.
+3. Espera a que termine la sincronizacion de Gradle.
+4. Ejecuta la configuracion `app` en un emulador o dispositivo fisico.
+
+#### Linea de comandos
+
+Compilar un APK de debug:
+
+```bash
+./gradlew assembleDebug
+```
+
+Ejecutar pruebas unitarias:
+
+```bash
+./gradlew test
+```
+
+### Alcance actual
+
+BeadMaker actualmente soporta:
+
+- crear y editar patrones localmente en el dispositivo
+- una ranura interna de guardado rapido
+- exportacion de patrones `.bm`
+- trazado asistido con plantillas
+
+Todavia no incluye:
+
+- sincronizacion en la nube
+- importacion externa de `.bm` desde la UI
+- importacion o exportacion de paletas
+- exportacion de patrones a PDF o imagen
+
+### Licencia
+
+Publicado bajo la licencia MIT. Consulta [LICENSE](LICENSE).
