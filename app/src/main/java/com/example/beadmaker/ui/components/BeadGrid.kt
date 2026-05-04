@@ -169,8 +169,10 @@ private fun BeadCell(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val shapeSize = size.minDimension * 0.9f
             val shapeRadius = shapeSize / 2f
-            val rectWidth = size.width * 0.92f
-            val rectHeight = size.height * 0.62f
+            // Rounded rectangles should almost fill the square cell so stacked rows do not
+            // leave a visible seam in the square layout.
+            val rectWidth = size.width * 0.96f
+            val rectHeight = size.height * 0.92f
             val rectLeft = (size.width - rectWidth) / 2f
             val rectTop = (size.height - rectHeight) / 2f
             val rectCorner = CornerRadius(rectHeight * 0.18f, rectHeight * 0.18f)
