@@ -168,21 +168,7 @@ Run unit tests:
 ./gradlew test
 ```
 
-## Current Scope
 
-BeadMaker currently supports:
-
-- creating and editing patterns locally on device
-- one in-app quick save slot
-- exporting patterns to `.bm`
-- template-assisted drafting
-
-It does not currently include:
-
-- cloud sync
-- external `.bm` import through the UI
-- palette import/export
-- PDF or image pattern export
 
 ## License
 
@@ -356,21 +342,7 @@ Ejecutar pruebas unitarias:
 ./gradlew test
 ```
 
-### Alcance actual
 
-BeadMaker actualmente soporta:
-
-- crear y editar patrones localmente en el dispositivo
-- una ranura interna de guardado rapido
-- exportacion de patrones `.bm`
-- trazado asistido con plantillas
-
-Todavia no incluye:
-
-- sincronizacion en la nube
-- importacion externa de `.bm` desde la UI
-- importacion o exportacion de paletas
-- exportacion de patrones a PDF o imagen
 
 ### Licencia
 
