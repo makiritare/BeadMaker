@@ -177,4 +177,11 @@ class BeadEditorStateTest {
 
         assertNull(restored)
     }
+
+    @Test
+    fun normalizeRotationDegrees_wrapsLargeAnglesIntoExpectedRange() {
+        assertEquals(90f, normalizeRotationDegrees(450f), 0.0001f)
+        assertEquals(-90f, normalizeRotationDegrees(-450f), 0.0001f)
+        assertEquals(180f, normalizeRotationDegrees(540f), 0.0001f)
+    }
 }

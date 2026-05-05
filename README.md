@@ -11,7 +11,7 @@ The app is designed for planning bead patterns directly on device:
 - Paint patterns on a configurable grid.
 - Switch between square, peyote, and brick-style layouts.
 - Trace over a photo or imported reference image with adjustable opacity.
-- Move and zoom either the template layer or the board itself.
+- Move, rotate, and zoom the template layer, or move and zoom the board itself.
 - Save a working draft locally or export a portable `.bm` pattern file.
 
 No account, network sync, or backend service is required.
@@ -49,7 +49,7 @@ Staggered layouts are rendered with row offsets so the editor matches the struct
 - Import a template image from the system photo picker
 - Capture a template photo with the device camera
 - Adjust template opacity from `0.1` to `1.0`
-- Enter template adjustment mode to pan and pinch-zoom the image
+- Enter template adjustment mode to pan, rotate, and pinch-zoom the image
 - Remove or reset the template transform at any time
 
 Template images are copied into app cache storage so the editor can keep using them after import.
@@ -72,6 +72,7 @@ Template images are copied into app cache storage so the editor can keep using t
 
 - Material 3 Compose UI
 - Custom light and dark color schemes
+- Bead-style adaptive launcher icon with monochrome themed variant
 - Edge-to-edge layout
 - English and Spanish string resources
 - Local state restoration across configuration changes via `rememberSaveable`
@@ -82,7 +83,7 @@ Template images are copied into app cache storage so the editor can keep using t
 2. Tap cells in `Paint` mode to build the pattern.
 3. Open `Tools` to change stitch type, bead shape, or grid dimensions.
 4. Import or photograph a template if you want to trace a reference.
-5. Switch to `Template` mode to align the image behind the grid.
+5. Switch to `Template` mode to align, rotate, and scale the image behind the grid.
 6. Switch to `Grid` mode if you need to reposition or zoom the whole board.
 7. Use `Files` to save, load, or export the pattern.
 
@@ -198,7 +199,7 @@ La aplicacion esta pensada para planificar patrones directamente en el dispositi
 - Pintar patrones sobre una cuadricula configurable.
 - Cambiar entre diseños cuadrados, peyote y tipo brick.
 - Calcar una foto o una imagen de referencia importada con opacidad ajustable.
-- Mover y hacer zoom sobre la capa de plantilla o sobre el tablero.
+- Mover, girar y hacer zoom sobre la capa de plantilla, o mover y hacer zoom sobre el tablero.
 - Guardar un borrador local o exportar un archivo de patron `.bm`.
 
 No requiere cuenta, sincronizacion en red ni servicios backend.
@@ -236,7 +237,7 @@ Los diseños escalonados se renderizan con desplazamientos por fila para que el 
 - Importar una imagen desde el selector de fotos del sistema
 - Tomar una foto con la camara del dispositivo
 - Ajustar la opacidad de la plantilla entre `0.1` y `1.0`
-- Entrar en modo de ajuste para mover la imagen y hacer pinch-to-zoom
+- Entrar en modo de ajuste para mover, girar y hacer pinch-to-zoom sobre la imagen
 - Quitar o reiniciar la transformacion de la plantilla en cualquier momento
 
 Las imagenes de plantilla se copian al cache de la app para que el editor pueda seguir usandolas despues de importarlas.
@@ -259,6 +260,7 @@ Las imagenes de plantilla se copian al cache de la app para que el editor pueda 
 
 - UI en Compose Material 3
 - Esquemas de color claros y oscuros personalizados
+- Icono adaptive estilo cuentas con variante monocromatica para temas
 - Diseño edge-to-edge
 - Recursos de texto en ingles y espanol
 - Restauracion de estado local entre cambios de configuracion mediante `rememberSaveable`
@@ -269,7 +271,7 @@ Las imagenes de plantilla se copian al cache de la app para que el editor pueda 
 2. Toca las celdas en modo `Paint` para construir el patron.
 3. Abre `Tools` para cambiar el tipo de puntada, la forma de la cuenta o las dimensiones de la cuadricula.
 4. Importa una plantilla o toma una foto si quieres calcar una referencia.
-5. Cambia a modo `Template` para alinear la imagen detras de la cuadricula.
+5. Cambia a modo `Template` para alinear, girar y escalar la imagen detras de la cuadricula.
 6. Cambia a modo `Grid` si necesitas reposicionar o hacer zoom del tablero completo.
 7. Usa `Files` para guardar, cargar o exportar el patron.
 

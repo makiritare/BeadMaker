@@ -15,7 +15,7 @@
     <string name="mode_grid">Cuadrícula</string>
     <string name="status_paint">Modo pintar activo.</string>
     <string name="status_eraser">Borrador activo.</string>
-    <string name="status_template_adjust">Mover y zoom de plantilla activos.</string>
+    <string name="status_template_adjust">Mover, zoom y giro de plantilla activos.</string>
     <string name="status_grid_adjust">Mover y zoom de cuadrícula activos.</string>
     <string name="grid_status">%1$s • %2$dx%3$d</string>
     <string name="template_image">Imagen de plantilla</string>

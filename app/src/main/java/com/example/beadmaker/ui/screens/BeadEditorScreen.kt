@@ -462,6 +462,7 @@ fun BeadEditorScreen() {
                                     scaleY = uiState.templateScale
                                     translationX = uiState.templateOffsetX
                                     translationY = uiState.templateOffsetY
+                                    rotationZ = uiState.templateRotation
                                 },
                             contentScale = ContentScale.Fit
                         )
@@ -487,12 +488,13 @@ fun BeadEditorScreen() {
                             .fillMaxSize()
                             // Keep the transform layer on top so grid taps do not steal the gesture.
                             .pointerInput(templateAdjustMode, boardAdjustMode, templateImageUri) {
-                                detectTransformGestures(panZoomLock = true) { _, pan, zoom, _ ->
+                                detectTransformGestures(panZoomLock = boardAdjustMode) { _, pan, zoom, rotation ->
                                     if (templateImageUri != null && templateAdjustMode) {
                                         editorState.updateTemplateTransform(
                                             panX = pan.x,
                                             panY = pan.y,
-                                            zoom = zoom
+                                            zoom = zoom,
+                                            rotation = rotation
                                         )
                                     } else if (boardAdjustMode) {
                                         editorState.updateBoardTransform(

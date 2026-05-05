@@ -15,7 +15,7 @@
     <string name="mode_grid">Grid</string>
     <string name="status_paint">Paint mode active.</string>
     <string name="status_eraser">Eraser active.</string>
-    <string name="status_template_adjust">Template move and zoom active.</string>
+    <string name="status_template_adjust">Template move, zoom, and rotation active.</string>
     <string name="status_grid_adjust">Grid move and zoom active.</string>
     <string name="grid_status">%1$s • %2$dx%3$d</string>
     <string name="template_image">Template image</string>

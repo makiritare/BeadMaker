@@ -32,6 +32,7 @@ const val DefaultTemplateOpacity = 0.55f
 const val MinTemplateScale = 0.2f
 const val MaxTemplateScale = 5.0f
 const val DefaultTemplateScale = 1.0f
+const val DefaultTemplateRotation = 0f
 const val MinBoardScale = 1.0f
 const val MaxBoardScale = 6.0f
 const val DefaultBoardScale = 1.0f
@@ -68,6 +69,7 @@ data class EditorUiState(
     val templateScale: Float = DefaultTemplateScale,
     val templateOffsetX: Float = 0f,
     val templateOffsetY: Float = 0f,
+    val templateRotation: Float = DefaultTemplateRotation,
     val boardScale: Float = DefaultBoardScale,
     val boardOffsetX: Float = 0f,
     val boardOffsetY: Float = 0f,
@@ -185,11 +187,12 @@ class BeadEditorState(
         uiState = uiState.copy(templateOpacity = value)
     }
 
-    fun updateTemplateTransform(panX: Float, panY: Float, zoom: Float) {
+    fun updateTemplateTransform(panX: Float, panY: Float, zoom: Float, rotation: Float) {
         uiState = uiState.copy(
             templateScale = (uiState.templateScale * zoom).coerceIn(MinTemplateScale, MaxTemplateScale),
             templateOffsetX = uiState.templateOffsetX + panX,
-            templateOffsetY = uiState.templateOffsetY + panY
+            templateOffsetY = uiState.templateOffsetY + panY,
+            templateRotation = normalizeRotationDegrees(uiState.templateRotation + rotation)
         )
     }
 
@@ -205,7 +208,8 @@ class BeadEditorState(
         uiState = uiState.copy(
             templateScale = DefaultTemplateScale,
             templateOffsetX = 0f,
-            templateOffsetY = 0f
+            templateOffsetY = 0f,
+            templateRotation = DefaultTemplateRotation
         )
     }
 
@@ -222,6 +226,7 @@ class BeadEditorState(
             templateScale = DefaultTemplateScale,
             templateOffsetX = 0f,
             templateOffsetY = 0f,
+            templateRotation = DefaultTemplateRotation,
             boardScale = DefaultBoardScale,
             boardOffsetX = 0f,
             boardOffsetY = 0f,
@@ -257,6 +262,7 @@ class BeadEditorState(
             templateScale = DefaultTemplateScale,
             templateOffsetX = 0f,
             templateOffsetY = 0f,
+            templateRotation = DefaultTemplateRotation,
             interactionMode = if (uiState.interactionMode == InteractionModeTemplate) {
                 InteractionModePaint
             } else {
@@ -488,7 +494,8 @@ class BeadEditorState(
                     state.uiState.pendingSettingsBeadShapeId,
                     state.uiState.pendingGridHorizontalResizeDirection.name,
                     state.uiState.pendingGridVerticalResizeDirection.name,
-                    ArrayList(state.uiState.recentColorIndices)
+                    ArrayList(state.uiState.recentColorIndices),
+                    state.uiState.templateRotation
                 )
             },
             restore = { restored ->
@@ -512,6 +519,7 @@ class BeadEditorState(
                         templateScale = restored[8] as Float,
                         templateOffsetX = restored[9] as Float,
                         templateOffsetY = restored[10] as Float,
+                        templateRotation = restored.getOrNull(27) as? Float ?: DefaultTemplateRotation,
                         boardScale = restored[11] as Float,
                         boardOffsetX = restored[12] as Float,
                         boardOffsetY = restored[13] as Float,
@@ -589,6 +597,16 @@ fun deleteTemplateCacheFile(context: Context, uriString: String?) {
     if (cachedTemplateFile.parentFile == cacheDirectory && cachedTemplateFile.exists()) {
         cachedTemplateFile.delete()
     }
+}
+
+fun normalizeRotationDegrees(degrees: Float): Float {
+    var normalized = degrees % 360f
+    if (normalized > 180f) {
+        normalized -= 360f
+    } else if (normalized <= -180f) {
+        normalized += 360f
+    }
+    return normalized
 }
 
 fun resizeBeadGrid(
