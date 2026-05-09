@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -57,6 +59,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,6 +68,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -95,6 +101,7 @@ import com.example.beadmaker.ui.state.GridVerticalResizeDirection
 import com.example.beadmaker.ui.state.createTemplateCaptureUri
 import com.example.beadmaker.ui.state.rememberBeadEditorState
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 
 private const val SpaceXs = 8
 private const val SpaceSm = 12
@@ -144,6 +151,8 @@ fun BeadEditorScreen() {
     val isDark = isSystemInDarkTheme()
     val editorState = rememberBeadEditorState()
     val uiState = editorState.uiState
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
     val paletteColors = BasicPaletteColorValues.map { Color(it) }
 
     val gridColumns = uiState.gridColumns
@@ -192,7 +201,11 @@ fun BeadEditorScreen() {
         else -> stringResource(R.string.status_paint)
     }
 
-    Scaffold { innerPadding ->
+    Scaffold(
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
+        }
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -354,16 +367,25 @@ fun BeadEditorScreen() {
                 ModeIconButton(
                     modifier = Modifier.weight(1f),
                     selected = uiState.interactionMode == InteractionModeTemplate,
-                    enabled = templateImageUri != null,
                     selectedContainerColor = MaterialTheme.colorScheme.tertiary,
                     selectedContentColor = MaterialTheme.colorScheme.onTertiary,
                     icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Image,
+                        ZoomModeIcon(
+                            baseIcon = Icons.Outlined.Image,
                             contentDescription = stringResource(R.string.mode_template)
                         )
                     },
-                    onClick = editorState::toggleTemplateMode
+                    onClick = {
+                        if (templateImageUri != null) {
+                            editorState.toggleTemplateMode()
+                        } else {
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = context.getString(R.string.template_image_required_warning)
+                                )
+                            }
+                        }
+                    }
                 )
 
                 ModeIconButton(
@@ -372,8 +394,8 @@ fun BeadEditorScreen() {
                     selectedContainerColor = MaterialTheme.colorScheme.primary,
                     selectedContentColor = MaterialTheme.colorScheme.onPrimary,
                     icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.GridOn,
+                        ZoomModeIcon(
+                            baseIcon = Icons.Outlined.GridOn,
                             contentDescription = stringResource(R.string.mode_grid)
                         )
                     },
@@ -1020,6 +1042,34 @@ private fun ModeIconButton(
         ) {
             icon()
         }
+    }
+}
+
+@Composable
+private fun ZoomModeIcon(
+    baseIcon: ImageVector,
+    contentDescription: String
+) {
+    Box(
+        modifier = Modifier.size(30.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = baseIcon,
+            contentDescription = contentDescription,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(25.dp)
+        )
+        Icon(
+            imageVector = Icons.Outlined.ZoomIn,
+            contentDescription = null,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = 9.dp)
+                .offset(y = (-2).dp)
+                .size(29.dp)
+        )
     }
 }
 

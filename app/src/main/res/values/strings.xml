@@ -32,6 +32,7 @@
     <string name="adjust_template">Adjust Template</string>
     <string name="reset">Reset</string>
     <string name="import_template_hint">Import a template image to unlock template controls.</string>
+    <string name="template_image_required_warning">Import a template image first.</string>
     <string name="select_color">Select Color</string>
     <string name="select_color_hint">Tap one color to paint with.</string>
     <string name="recent_colors">Recent colors</string>

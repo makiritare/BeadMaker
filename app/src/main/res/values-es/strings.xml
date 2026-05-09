@@ -32,6 +32,7 @@
     <string name="adjust_template">Ajustar plantilla</string>
     <string name="reset">Reset</string>
     <string name="import_template_hint">Importa una imagen de plantilla para habilitar sus controles.</string>
+    <string name="template_image_required_warning">Importa primero una imagen de plantilla.</string>
     <string name="select_color">Seleccionar color</string>
     <string name="select_color_hint">Toca un color para pintar.</string>
     <string name="recent_colors">Colores recientes</string>
