@@ -7,13 +7,14 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoFixOff
+import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.GridOn
+import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -41,13 +42,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.AlertDialog
@@ -79,18 +84,24 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.example.beadmaker.R
 import com.example.beadmaker.ui.components.BeadGrid
 import com.example.beadmaker.ui.model.BeadShape
 import com.example.beadmaker.ui.model.StitchMode
-import com.example.beadmaker.ui.state.InteractionModeGrid
+import com.example.beadmaker.ui.state.InteractionModeFill
+import com.example.beadmaker.ui.state.InteractionModeLine
 import com.example.beadmaker.ui.state.InteractionModePaint
 import com.example.beadmaker.ui.state.InteractionModeTemplate
 import com.example.beadmaker.ui.state.MaxGridSize
@@ -98,10 +109,14 @@ import com.example.beadmaker.ui.state.MinGridSize
 import com.example.beadmaker.ui.state.MinTemplateOpacity
 import com.example.beadmaker.ui.state.GridHorizontalResizeDirection
 import com.example.beadmaker.ui.state.GridVerticalResizeDirection
+import com.example.beadmaker.ui.state.calculateLineIndices
 import com.example.beadmaker.ui.state.createTemplateCaptureUri
 import com.example.beadmaker.ui.state.rememberBeadEditorState
+import com.example.beadmaker.ui.state.DefaultBoardScale
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.abs
 
 private const val SpaceXs = 8
 private const val SpaceSm = 12
@@ -114,8 +129,9 @@ private const val CompactDirectionButtonHeight = 36
 private val ControlShape = RoundedCornerShape(14.dp)
 private val PaletteChipShape = RoundedCornerShape(12.dp)
 private val PaletteChipInsetShape = RoundedCornerShape(8.dp)
-private val GridFrameShape = RoundedCornerShape(24.dp)
-private val GridInnerFrameShape = RoundedCornerShape(20.dp)
+private val HistoryDockShape = RoundedCornerShape(24.dp)
+private val GridFrameShape = RoundedCornerShape(0.dp)
+private val GridInnerFrameShape = RoundedCornerShape(0.dp)
 
 private val BasicPaletteColorValues = listOf(
     0xFF000000.toInt(),
@@ -162,9 +178,24 @@ fun BeadEditorScreen() {
     val stitchMode = StitchMode.fromId(uiState.stitchModeId)
     val beadShape = BeadShape.fromId(uiState.beadShapeId)
     val currentColorIndex = uiState.selectedColorIndex.takeIf { it in paletteColors.indices } ?: 0
-    val currentColor = paletteColors[currentColorIndex]
     val templateAdjustMode = uiState.interactionMode == InteractionModeTemplate
-    val boardAdjustMode = uiState.interactionMode == InteractionModeGrid
+    val paintModeSelected = uiState.interactionMode == InteractionModePaint && !uiState.brushSelected && !uiState.eraserSelected
+    val brushModeSelected = uiState.interactionMode == InteractionModePaint && uiState.brushSelected
+    val fillModeSelected = uiState.interactionMode == InteractionModeFill && !uiState.eraserSelected
+    val lineModeSelected = uiState.interactionMode == InteractionModeLine && !uiState.eraserSelected
+    val linePreviewIndices = if (lineModeSelected &&
+        uiState.pendingLineStartIndex != null &&
+        uiState.pendingLineEndIndex != null
+    ) {
+        calculateLineIndices(
+            startIndex = uiState.pendingLineStartIndex,
+            endIndex = uiState.pendingLineEndIndex,
+            columns = gridColumns,
+            maxIndex = beads.lastIndex
+        ).toSet()
+    } else {
+        emptySet()
+    }
     val templatePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -196,7 +227,12 @@ fun BeadEditorScreen() {
     var showFileActionsDialog by rememberSaveable { mutableStateOf(false) }
     val modeStatusText = when {
         templateAdjustMode -> stringResource(R.string.status_template_adjust)
-        boardAdjustMode -> stringResource(R.string.status_grid_adjust)
+        lineModeSelected && uiState.pendingLineEndIndex != null -> stringResource(R.string.status_line_ready)
+        lineModeSelected && uiState.pendingLineStartIndex != null -> stringResource(R.string.status_line_pending)
+        lineModeSelected -> stringResource(R.string.status_line)
+        fillModeSelected -> stringResource(R.string.status_fill)
+        brushModeSelected && uiState.eraserSelected -> stringResource(R.string.status_brush_eraser)
+        brushModeSelected -> stringResource(R.string.status_brush)
         uiState.eraserSelected -> stringResource(R.string.status_eraser)
         else -> stringResource(R.string.status_paint)
     }
@@ -206,319 +242,211 @@ fun BeadEditorScreen() {
             SnackbarHost(hostState = snackbarHostState)
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = SpaceMd.dp, vertical = SpaceMd.dp),
-            verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(SpaceSm.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(vertical = SpaceMd.dp),
+                verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
             ) {
-                IconButton(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(
-                            color = if (uiState.eraserSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                Color.Transparent
-                            }
-                        )
-                        .border(
-                            width = if (uiState.eraserSelected) 2.dp else 1.dp,
-                            color = if (uiState.eraserSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.outlineVariant
-                            },
-                            shape = CircleShape
-                        ),
-                    onClick = editorState::toggleEraser,
+                Column(
+                    modifier = Modifier.padding(horizontal = SpaceMd.dp),
+                    verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.AutoFixOff,
-                        contentDescription = stringResource(R.string.eraser),
-                        tint = if (uiState.eraserSelected) {
-                            MaterialTheme.colorScheme.onPrimary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
-                }
-
-                IconButton(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(currentColor)
-                        .border(
-                            width = if (uiState.eraserSelected) 1.dp else 2.dp,
-                            color = if (uiState.eraserSelected) {
-                                MaterialTheme.colorScheme.outlineVariant
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                            shape = CircleShape
-                        ),
-                    onClick = editorState::showColorPicker,
-                ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                        val radius = size.minDimension / 2.2f
-                        // Dark rim
-                        drawCircle(
-                            color = Color.Black.copy(alpha = 0.15f),
-                            radius = radius,
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                        )
-                        // Small highlight
-                        drawCircle(
-                            color = Color.White.copy(alpha = 0.25f),
-                            radius = radius * 0.4f,
-                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-                        )
-                    }
-                }
-
-                IconButton(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = CircleShape
-                        ),
-                    onClick = editorState::undo,
-                    enabled = editorState.canUndo
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.Undo,
-                        contentDescription = stringResource(R.string.undo)
-                    )
-                }
-
-                IconButton(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = CircleShape
-                        ),
-                    onClick = editorState::redo,
-                    enabled = editorState.canRedo
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.Redo,
-                        contentDescription = stringResource(R.string.redo)
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                IconButton(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = CircleShape
-                        ),
-                    onClick = { showFileActionsDialog = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Save,
-                        contentDescription = stringResource(R.string.file_actions)
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ModeIconButton(
-                    modifier = Modifier.weight(1f),
-                    selected = uiState.interactionMode == InteractionModePaint,
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedContentColor = MaterialTheme.colorScheme.onPrimary,
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = stringResource(R.string.mode_paint)
-                        )
-                    },
-                    onClick = editorState::setPaintMode
-                )
-
-                ModeIconButton(
-                    modifier = Modifier.weight(1f),
-                    selected = uiState.interactionMode == InteractionModeTemplate,
-                    selectedContainerColor = MaterialTheme.colorScheme.tertiary,
-                    selectedContentColor = MaterialTheme.colorScheme.onTertiary,
-                    icon = {
-                        ZoomModeIcon(
-                            baseIcon = Icons.Outlined.Image,
-                            contentDescription = stringResource(R.string.mode_template)
-                        )
-                    },
-                    onClick = {
-                        if (templateImageUri != null) {
-                            editorState.toggleTemplateMode()
-                        } else {
-                            coroutineScope.launch {
-                                snackbarHostState.showSnackbar(
-                                    message = context.getString(R.string.template_image_required_warning)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            repeat(6) { slot ->
+                                val colorIndex = uiState.recentColorIndices.getOrNull(slot)
+                                val swatchColor = colorIndex?.let { paletteColors.getOrNull(it) }
+                                val isSelected = colorIndex == currentColorIndex
+                                RecentColorSwatch(
+                                    color = swatchColor,
+                                    selected = isSelected,
+                                    onClick = {
+                                        if (colorIndex == null || isSelected) {
+                                            editorState.showColorPicker()
+                                        } else {
+                                            editorState.applySelectedColor(colorIndex)
+                                        }
+                                    }
                                 )
                             }
                         }
                     }
-                )
 
-                ModeIconButton(
-                    modifier = Modifier.weight(1f),
-                    selected = uiState.interactionMode == InteractionModeGrid,
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedContentColor = MaterialTheme.colorScheme.onPrimary,
-                    icon = {
-                        ZoomModeIcon(
-                            baseIcon = Icons.Outlined.GridOn,
-                            contentDescription = stringResource(R.string.mode_grid)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        ModeCircleButton(
+                            selected = paintModeSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Edit,
+                                    contentDescription = stringResource(R.string.mode_paint)
+                                )
+                            },
+                            onClick = editorState::setPaintMode
                         )
-                    },
-                    onClick = editorState::toggleGridMode
-                )
-            }
 
-            Text(
-                text = modeStatusText,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.grid_status,
-                        stringResource(stitchMode.labelRes),
-                        gridColumns,
-                        gridRows
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                TextButton(
-                    onClick = { editorState.openToolsDialogAtTab(0) }
-                ) {
-                    Text(stringResource(R.string.tools))
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(gridColumns.toFloat() / gridRows.toFloat())
-                    .shadow(
-                        elevation = 8.dp,
-                        shape = GridFrameShape,
-                        ambientColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.22f),
-                        spotColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.18f)
-                    )
-                    .clip(GridFrameShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (!isDark) 0.58f else 0.85f))
-                    .border(
-                        width = 1.5.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = if (!isDark) 0.72f else 0.4f),
-                        shape = GridFrameShape
-                    )
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(6.dp)
-                        .clip(GridInnerFrameShape)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = if (!isDark) 0.12f else 0.3f))
-                        .border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (!isDark) 0.55f else 0.2f),
-                            shape = GridInnerFrameShape
+                        ModeCircleButton(
+                            selected = uiState.eraserSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
+                            icon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ink_eraser_24px),
+                                    contentDescription = stringResource(R.string.eraser)
+                                )
+                            },
+                            onClick = editorState::toggleEraser
                         )
-                )
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = uiState.boardScale
-                            scaleY = uiState.boardScale
-                            translationX = uiState.boardOffsetX
-                            translationY = uiState.boardOffsetY
-                        }
-                ) {
-                    if (templateImageUri != null) {
-                        AsyncImage(
-                            model = templateImageUri,
-                            contentDescription = stringResource(R.string.template_image),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .alpha(uiState.templateOpacity)
-                                .graphicsLayer {
-                                    scaleX = uiState.templateScale
-                                    scaleY = uiState.templateScale
-                                    translationX = uiState.templateOffsetX
-                                    translationY = uiState.templateOffsetY
-                                    rotationZ = uiState.templateRotation
-                                },
-                            contentScale = ContentScale.Fit
+                        ModeCircleButton(
+                            selected = brushModeSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.Brush,
+                                    contentDescription = stringResource(R.string.mode_brush)
+                                )
+                            },
+                            onClick = editorState::setBrushMode
                         )
+
+                        ModeCircleButton(
+                            selected = fillModeSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.secondary,
+                            selectedContentColor = MaterialTheme.colorScheme.onSecondary,
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Outlined.FormatColorFill,
+                                    contentDescription = stringResource(R.string.mode_fill)
+                                )
+                            },
+                            onClick = editorState::setFillMode
+                        )
+
+                        ModeCircleButton(
+                            selected = lineModeSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.secondary,
+                            selectedContentColor = MaterialTheme.colorScheme.onSecondary,
+                            icon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.diagonal_line_24px),
+                                    contentDescription = stringResource(R.string.mode_line)
+                                )
+                            },
+                            onClick = editorState::setLineMode
+                        )
+
+                        ModeCircleButton(
+                            selected = uiState.interactionMode == InteractionModeTemplate,
+                            selectedContainerColor = MaterialTheme.colorScheme.tertiary,
+                            selectedContentColor = MaterialTheme.colorScheme.onTertiary,
+                            icon = {
+                                ZoomModeIcon(
+                                    baseIcon = Icons.Outlined.Image,
+                                    contentDescription = stringResource(R.string.mode_template)
+                                )
+                            },
+                            onClick = {
+                                if (templateImageUri != null) {
+                                    editorState.toggleTemplateMode()
+                                } else {
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            message = context.getString(R.string.template_image_required_warning)
+                                        )
+                                    }
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.weight(1f))
                     }
 
-                    BeadGrid(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(SpaceSm.dp),
-                        beads = beads,
-                        colors = paletteColors,
-                        stitchMode = stitchMode,
-                        beadShape = beadShape,
-                        boardScale = uiState.boardScale,
-                        columns = gridColumns,
-                        onCellTap = editorState::paintCell
+                    Text(
+                        text = modeStatusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(
+                                R.string.grid_status,
+                                stringResource(stitchMode.labelRes),
+                                gridColumns,
+                                gridRows
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
-                if ((templateImageUri != null && templateAdjustMode) || boardAdjustMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .shadow(
+                            elevation = 8.dp,
+                            shape = GridFrameShape,
+                            ambientColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.22f),
+                            spotColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.18f)
+                        )
+                        .clip(GridFrameShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (!isDark) 0.58f else 0.85f))
+                        .border(
+                            width = 1.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = if (!isDark) 0.72f else 0.4f),
+                            shape = GridFrameShape
+                        )
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            // Keep the transform layer on top so grid taps do not steal the gesture.
-                            .pointerInput(templateAdjustMode, boardAdjustMode, templateImageUri) {
-                                detectTransformGestures(panZoomLock = boardAdjustMode) { _, pan, zoom, rotation ->
-                                    if (templateImageUri != null && templateAdjustMode) {
-                                        editorState.updateTemplateTransform(
-                                            panX = pan.x,
-                                            panY = pan.y,
-                                            zoom = zoom,
-                                            rotation = rotation
-                                        )
-                                    } else if (boardAdjustMode) {
+                            .clip(GridInnerFrameShape)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = if (!isDark) 0.12f else 0.3f))
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (!isDark) 0.55f else 0.2f),
+                                shape = GridInnerFrameShape
+                            )
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(templateAdjustMode) {
+                                if (!templateAdjustMode) {
+                                    detectMultiTouchTransformGestures(
+                                        panZoomLock = true,
+                                        allowSingleFingerPan = uiState.boardScale > DefaultBoardScale
+                                    ) { pan, zoom, _ ->
                                         editorState.updateBoardTransform(
                                             panX = pan.x,
                                             panY = pan.y,
@@ -527,11 +455,134 @@ fun BeadEditorScreen() {
                                     }
                                 }
                             }
-                    )
+                            .graphicsLayer {
+                                scaleX = uiState.boardScale
+                                scaleY = uiState.boardScale
+                                translationX = uiState.boardOffsetX
+                                translationY = uiState.boardOffsetY
+                            }
+                    ) {
+                        if (templateImageUri != null) {
+                            AsyncImage(
+                                model = templateImageUri,
+                                contentDescription = stringResource(R.string.template_image),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .alpha(uiState.templateOpacity)
+                                    .graphicsLayer {
+                                        scaleX = uiState.templateScale
+                                        scaleY = uiState.templateScale
+                                        translationX = uiState.templateOffsetX
+                                        translationY = uiState.templateOffsetY
+                                        rotationZ = uiState.templateRotation
+                                    },
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+
+                        BeadGrid(
+                            modifier = Modifier
+                                .fillMaxSize(),
+                            beads = beads,
+                            colors = paletteColors,
+                            stitchMode = stitchMode,
+                            beadShape = beadShape,
+                            boardScale = uiState.boardScale,
+                            columns = gridColumns,
+                            brushEnabled = brushModeSelected,
+                            onBrushStrokeStart = editorState::startBrushStroke,
+                            onBrushStrokePaint = editorState::paintBrushCell,
+                            onBrushStrokeEnd = editorState::endBrushStroke,
+                            lineStartIndex = uiState.pendingLineStartIndex,
+                            linePreviewIndices = linePreviewIndices,
+                            onCellTap = editorState::paintCell
+                        )
+                    }
+
+                    if (templateImageUri != null && templateAdjustMode) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(templateAdjustMode, templateImageUri) {
+                                    detectTransformGestures(panZoomLock = false) { _, pan, zoom, rotation ->
+                                        editorState.updateTemplateTransform(
+                                            panX = pan.x,
+                                            panY = pan.y,
+                                            zoom = zoom,
+                                            rotation = rotation
+                                        )
+                                    }
+                            }
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = SpaceSm.dp, top = SpaceSm.dp)
+                            .clip(HistoryDockShape)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                shape = HistoryDockShape
+                            )
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        IconButton(
+                            modifier = Modifier.size(56.dp),
+                            onClick = editorState::undo,
+                            enabled = editorState.canUndo
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.Undo,
+                                contentDescription = stringResource(R.string.undo),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        IconButton(
+                            modifier = Modifier.size(56.dp),
+                            onClick = editorState::redo,
+                            enabled = editorState.canRedo
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.Redo,
+                                contentDescription = stringResource(R.string.redo),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(SpaceXs.dp))
+                Spacer(modifier = Modifier.height(72.dp))
             }
 
-            Spacer(modifier = Modifier.height(SpaceXs.dp))
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(horizontal = SpaceMd.dp, vertical = SpaceMd.dp),
+                horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BottomDockButton(
+                    icon = Icons.Outlined.Image,
+                    contentDescription = stringResource(R.string.template),
+                    onClick = { editorState.openToolsDialogAtTab(0) }
+                )
+                BottomDockButton(
+                    icon = Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.settings),
+                    onClick = { editorState.openToolsDialogAtTab(1) }
+                )
+                BottomDockButton(
+                    icon = Icons.Outlined.Save,
+                    contentDescription = stringResource(R.string.file_actions),
+                    onClick = { showFileActionsDialog = true }
+                )
+            }
         }
     }
 
@@ -560,7 +611,13 @@ fun BeadEditorScreen() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = stringResource(R.string.tools))
+                    Text(
+                        text = if (uiState.selectedToolsTab == 0) {
+                            stringResource(R.string.template)
+                        } else {
+                            stringResource(R.string.settings)
+                        }
+                    )
                     IconButton(
                         onClick = editorState::dismissToolsDialog
                     ) {
@@ -578,29 +635,6 @@ fun BeadEditorScreen() {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
                 ) {
-                    TabRow(selectedTabIndex = uiState.selectedToolsTab) {
-                        Tab(
-                            selected = uiState.selectedToolsTab == 0,
-                            onClick = { editorState.selectToolsTab(0) },
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Image,
-                                    contentDescription = stringResource(R.string.template)
-                                )
-                            }
-                        )
-                        Tab(
-                            selected = uiState.selectedToolsTab == 1,
-                            onClick = { editorState.selectToolsTab(1) },
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Settings,
-                                    contentDescription = stringResource(R.string.editor)
-                                )
-                            }
-                        )
-                    }
-
                     when (uiState.selectedToolsTab) {
                         0 -> {
                             Row(
@@ -1003,8 +1037,73 @@ fun BeadEditorScreen() {
 }
 
 @Composable
-private fun ModeIconButton(
-    modifier: Modifier = Modifier,
+private fun RecentColorSwatch(
+    color: Color?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(color ?: MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)
+                },
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (color != null) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val radius = size.minDimension / 2.2f
+                drawCircle(
+                    color = Color.Black.copy(alpha = 0.15f),
+                    radius = radius,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                )
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.25f),
+                    radius = radius * 0.4f,
+                    center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomDockButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    IconButton(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+                shape = CircleShape
+            ),
+        onClick = onClick
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription
+        )
+    }
+}
+
+@Composable
+private fun ModeCircleButton(
     selected: Boolean,
     enabled: Boolean = true,
     selectedContainerColor: Color = MaterialTheme.colorScheme.primary,
@@ -1013,8 +1112,8 @@ private fun ModeIconButton(
     onClick: () -> Unit
 ) {
     Surface(
-        modifier = modifier,
-        shape = ControlShape,
+        modifier = Modifier.size(46.dp),
+        shape = CircleShape,
         color = if (selected) {
             selectedContainerColor
         } else {
@@ -1035,9 +1134,7 @@ private fun ModeIconButton(
         onClick = onClick
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
             icon()
@@ -1070,6 +1167,73 @@ private fun ZoomModeIcon(
                 .offset(y = (-2).dp)
                 .size(29.dp)
         )
+    }
+}
+
+private suspend fun PointerInputScope.detectMultiTouchTransformGestures(
+    panZoomLock: Boolean = false,
+    allowSingleFingerPan: Boolean = false,
+    onGesture: (pan: Offset, zoom: Float, rotation: Float) -> Unit
+) {
+    awaitEachGesture {
+        var rotation = 0f
+        var zoom = 1f
+        var pan = Offset.Zero
+        var pastTouchSlop = false
+        val touchSlop = viewConfiguration.touchSlop
+        var lockedToPanZoom = false
+
+        awaitFirstDown(requireUnconsumed = false)
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val canceled = event.changes.any { it.isConsumed }
+            val activePointerCount = event.changes.count { it.pressed && it.previousPressed }
+            val allowTransform = activePointerCount >= 2
+            val allowPan = activePointerCount >= 2 || (allowSingleFingerPan && activePointerCount == 1)
+
+            if (!canceled && allowPan) {
+                val zoomChange = if (allowTransform) event.calculateZoom() else 1f
+                val rotationChange = if (allowTransform) event.calculateRotation() else 0f
+                val panChange = event.calculatePan()
+
+                if (!pastTouchSlop) {
+                    zoom *= zoomChange
+                    rotation += rotationChange
+                    pan += panChange
+
+                    val centroidSize = event.calculateCentroidSize(useCurrent = false)
+                    val zoomMotion = abs(1 - zoom) * centroidSize
+                    val rotationMotion = abs(rotation * PI.toFloat() * centroidSize / 180f)
+                    val panMotion = pan.getDistance()
+
+                    if (zoomMotion > touchSlop ||
+                        rotationMotion > touchSlop ||
+                        panMotion > touchSlop
+                    ) {
+                        pastTouchSlop = true
+                        lockedToPanZoom = panZoomLock && rotationMotion < touchSlop
+                    }
+                }
+
+                if (pastTouchSlop) {
+                    val effectiveRotation = if (lockedToPanZoom) 0f else rotationChange
+                    if (effectiveRotation != 0f ||
+                        zoomChange != 1f ||
+                        panChange != Offset.Zero
+                    ) {
+                        onGesture(panChange, zoomChange, effectiveRotation)
+                    }
+                }
+            }
+
+            if (pastTouchSlop) {
+                event.changes.forEach { change ->
+                    if (change.positionChanged()) {
+                        change.consume()
+                    }
+                }
+            }
+        } while (!canceled && event.changes.any { it.pressed })
     }
 }
 
@@ -1195,53 +1359,16 @@ private fun PalettePickerDialog(
                         ) {
                             rowColors.forEachIndexed { columnIndex, color ->
                                 val colorIndex = rowIndex * 6 + columnIndex
-                                val isSelected = pendingSelection == colorIndex
-                                Box(
+                                PaletteColorChip(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .aspectRatio(1f)
-                                        .clip(PaletteChipShape)
-                                        .background(color)
-                                        .border(
-                                            width = if (isSelected) 4.dp else 1.dp,
-                                            color = if (isSelected) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.outlineVariant
-                                            },
-                                            shape = PaletteChipShape
-                                        )
-                                        .clickable {
-                                            pendingSelection = colorIndex
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                                        val radius = size.minDimension / 2.5f
-                                        drawCircle(
-                                            color = Color.Black.copy(alpha = 0.15f),
-                                            radius = radius,
-                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
-                                        )
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = 0.25f),
-                                            radius = radius * 0.4f,
-                                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-                                        )
+                                        .aspectRatio(1f),
+                                    color = color,
+                                    selected = pendingSelection == colorIndex,
+                                    onClick = {
+                                        pendingSelection = colorIndex
                                     }
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(4.dp)
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = MaterialTheme.colorScheme.surface,
-                                                    shape = PaletteChipInsetShape
-                                                )
-                                        )
-                                    }
-                                }
+                                )
                             }
                         }
                     }
@@ -1273,53 +1400,16 @@ private fun PalettePickerDialog(
                         } else {
                             val color = colors.getOrNull(colorIndex)
                             if (color != null) {
-                                val isSelected = pendingSelection == colorIndex
-                                Box(
+                                PaletteColorChip(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .aspectRatio(1f)
-                                        .clip(PaletteChipShape)
-                                        .background(color)
-                                        .border(
-                                            width = if (isSelected) 4.dp else 1.dp,
-                                            color = if (isSelected) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.outlineVariant
-                                            },
-                                            shape = PaletteChipShape
-                                        )
-                                        .clickable {
-                                            pendingSelection = colorIndex
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                                        val radius = size.minDimension / 2.5f
-                                        drawCircle(
-                                            color = Color.Black.copy(alpha = 0.15f),
-                                            radius = radius,
-                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
-                                        )
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = 0.25f),
-                                            radius = radius * 0.4f,
-                                            center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-                                        )
+                                        .aspectRatio(1f),
+                                    color = color,
+                                    selected = pendingSelection == colorIndex,
+                                    onClick = {
+                                        pendingSelection = colorIndex
                                     }
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(4.dp)
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = MaterialTheme.colorScheme.surface,
-                                                    shape = PaletteChipInsetShape
-                                                )
-                                        )
-                                    }
-                                }
+                                )
                             } else {
                                 Box(
                                     modifier = Modifier
@@ -1347,4 +1437,60 @@ private fun PalettePickerDialog(
             }
         }
     )
+}
+
+@Composable
+private fun PaletteColorChip(
+    color: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(PaletteChipShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .border(
+                width = if (selected) 4.dp else 1.dp,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                shape = PaletteChipShape
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(6.dp)
+        ) {
+            val radius = size.minDimension * 0.42f
+            drawCircle(color = color, radius = radius)
+            drawCircle(
+                color = Color.Black.copy(alpha = 0.15f),
+                radius = radius,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.25f),
+                radius = radius * 0.4f,
+                center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
+            )
+        }
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(4.dp)
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = PaletteChipInsetShape
+                    )
+            )
+        }
+    }
 }

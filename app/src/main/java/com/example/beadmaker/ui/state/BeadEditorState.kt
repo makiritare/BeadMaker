@@ -37,8 +37,10 @@ const val MinBoardScale = 1.0f
 const val MaxBoardScale = 6.0f
 const val DefaultBoardScale = 1.0f
 const val InteractionModePaint = 0
-const val InteractionModeTemplate = 1
-const val InteractionModeGrid = 2
+const val InteractionModeFill = 1
+const val InteractionModeLine = 2
+const val InteractionModeTemplate = 3
+const val InteractionModeGrid = 4
 
 private const val MaxUndoStackSize = 30
 private const val SavedPatternFileName = "saved_pattern.bm"
@@ -74,6 +76,9 @@ data class EditorUiState(
     val boardOffsetX: Float = 0f,
     val boardOffsetY: Float = 0f,
     val interactionMode: Int = InteractionModePaint,
+    val brushSelected: Boolean = false,
+    val pendingLineStartIndex: Int? = null,
+    val pendingLineEndIndex: Int? = null,
     val showColorPickerDialog: Boolean = false,
     val showToolsDialog: Boolean = false,
     val selectedToolsTab: Int = 0,
@@ -103,6 +108,8 @@ class BeadEditorState(
     private val appContext = context.applicationContext
     private val undoStack = mutableStateListOf<BoardSnapshot>()
     private val redoStack = mutableStateListOf<BoardSnapshot>()
+    private var brushStrokeActive = false
+    private var lastBrushIndex: Int? = null
 
     var uiState by mutableStateOf(initialUiState)
         private set
@@ -117,7 +124,22 @@ class BeadEditorState(
         get() = isGridEmpty(uiState.beads)
 
     fun toggleEraser() {
-        uiState = uiState.copy(eraserSelected = !uiState.eraserSelected)
+        val nextEraserSelected = !uiState.eraserSelected
+        uiState = uiState.copy(
+            eraserSelected = nextEraserSelected,
+            interactionMode = if (nextEraserSelected) {
+                InteractionModePaint
+            } else {
+                uiState.interactionMode
+            },
+            brushSelected = if (nextEraserSelected && uiState.interactionMode != InteractionModePaint) {
+                false
+            } else {
+                uiState.brushSelected
+            },
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
     }
 
     fun showColorPicker() {
@@ -133,12 +155,50 @@ class BeadEditorState(
             selectedColorIndex = index,
             recentColorIndices = updateRecentColors(uiState.recentColorIndices, index),
             eraserSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null,
             showColorPickerDialog = false
         )
     }
 
     fun setPaintMode() {
-        uiState = uiState.copy(interactionMode = InteractionModePaint)
+        uiState = uiState.copy(
+            interactionMode = InteractionModePaint,
+            eraserSelected = false,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
+    }
+
+    fun setBrushMode() {
+        uiState = uiState.copy(
+            interactionMode = InteractionModePaint,
+            eraserSelected = false,
+            brushSelected = true,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
+    }
+
+    fun setFillMode() {
+        uiState = uiState.copy(
+            interactionMode = InteractionModeFill,
+            eraserSelected = false,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
+    }
+
+    fun setLineMode() {
+        uiState = uiState.copy(
+            interactionMode = InteractionModeLine,
+            eraserSelected = false,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
     }
 
     fun toggleTemplateMode() {
@@ -148,7 +208,11 @@ class BeadEditorState(
                 InteractionModePaint
             } else {
                 InteractionModeTemplate
-            }
+            },
+            eraserSelected = false,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
         )
     }
 
@@ -158,8 +222,55 @@ class BeadEditorState(
                 InteractionModePaint
             } else {
                 InteractionModeGrid
-            }
+            },
+            eraserSelected = false,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
         )
+    }
+
+    fun startBrushStroke() {
+        brushStrokeActive = false
+        lastBrushIndex = null
+    }
+
+    fun paintBrushCell(index: Int) {
+        if (uiState.interactionMode != InteractionModePaint) return
+
+        val nextColor = if (uiState.eraserSelected) EmptyBead else uiState.selectedColorIndex
+        val updatedBeads = if (lastBrushIndex == null) {
+            updateBeadAt(uiState.beads, index, nextColor)
+        } else {
+            updateBeadsAt(
+                beads = uiState.beads,
+                indices = calculateLineIndices(
+                    startIndex = lastBrushIndex!!,
+                    endIndex = index,
+                    columns = uiState.gridColumns,
+                    maxIndex = uiState.beads.lastIndex
+                ),
+                nextColor = nextColor
+            )
+        }
+        if (updatedBeads === uiState.beads) return
+
+        if (!brushStrokeActive) {
+            pushSnapshot()
+            brushStrokeActive = true
+        }
+
+        uiState = uiState.copy(
+            beads = updatedBeads,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
+        lastBrushIndex = index
+    }
+
+    fun endBrushStroke() {
+        brushStrokeActive = false
+        lastBrushIndex = null
     }
 
     fun openToolsDialogAtTab(tabIndex: Int) {
@@ -230,7 +341,8 @@ class BeadEditorState(
             boardScale = DefaultBoardScale,
             boardOffsetX = 0f,
             boardOffsetY = 0f,
-            interactionMode = InteractionModePaint
+            interactionMode = InteractionModePaint,
+            brushSelected = false
         )
     }
 
@@ -267,7 +379,8 @@ class BeadEditorState(
                 InteractionModePaint
             } else {
                 uiState.interactionMode
-            }
+            },
+            brushSelected = false
         )
     }
 
@@ -280,18 +393,89 @@ class BeadEditorState(
     }
 
     fun paintCell(index: Int) {
-        if (uiState.interactionMode != InteractionModePaint) return
+        if (uiState.interactionMode == InteractionModeTemplate) return
 
         val nextColor = if (uiState.eraserSelected) {
             EmptyBead
         } else {
             uiState.selectedColorIndex
         }
-        val updatedBeads = updateBeadAt(uiState.beads, index, nextColor)
+        if (uiState.interactionMode == InteractionModeLine) {
+            val startIndex = uiState.pendingLineStartIndex
+            if (startIndex == null) {
+                uiState = uiState.copy(
+                    pendingLineStartIndex = index,
+                    pendingLineEndIndex = null
+                )
+                return
+            }
+
+            val endIndex = uiState.pendingLineEndIndex
+            if (endIndex == null) {
+                uiState = if (index == startIndex) {
+                    uiState.copy(
+                        pendingLineStartIndex = null,
+                        pendingLineEndIndex = null
+                    )
+                } else {
+                    uiState.copy(pendingLineEndIndex = index)
+                }
+                return
+            }
+
+            if (index != endIndex) {
+                uiState = if (index == startIndex) {
+                    uiState.copy(
+                        pendingLineStartIndex = index,
+                        pendingLineEndIndex = null
+                    )
+                } else {
+                    uiState.copy(pendingLineEndIndex = index)
+                }
+                return
+            }
+
+            val updatedBeads = drawLineOnGrid(
+                beads = uiState.beads,
+                startIndex = startIndex,
+                endIndex = endIndex,
+                replacementColor = nextColor,
+                columns = uiState.gridColumns
+            )
+            uiState = if (updatedBeads === uiState.beads) {
+                uiState.copy(
+                    pendingLineStartIndex = null,
+                    pendingLineEndIndex = null
+                )
+            } else {
+                pushSnapshot()
+                uiState.copy(
+                    beads = updatedBeads,
+                    pendingLineStartIndex = null,
+                    pendingLineEndIndex = null
+                )
+            }
+            return
+        }
+
+        val updatedBeads = if (uiState.interactionMode == InteractionModeFill) {
+            fillConnectedRegion(
+                beads = uiState.beads,
+                index = index,
+                replacementColor = nextColor,
+                columns = uiState.gridColumns
+            )
+        } else {
+            updateBeadAt(uiState.beads, index, nextColor)
+        }
         if (updatedBeads === uiState.beads) return
 
         pushSnapshot()
-        uiState = uiState.copy(beads = updatedBeads)
+        uiState = uiState.copy(
+            beads = updatedBeads,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
+        )
     }
 
     fun undo() {
@@ -307,7 +491,10 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint
+            interactionMode = InteractionModePaint,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
         )
     }
 
@@ -324,7 +511,10 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint
+            interactionMode = InteractionModePaint,
+            brushSelected = false,
+            pendingLineStartIndex = null,
+            pendingLineEndIndex = null
         )
     }
 
@@ -460,7 +650,8 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint
+            interactionMode = InteractionModePaint,
+            brushSelected = false
         )
     }
 
@@ -483,6 +674,8 @@ class BeadEditorState(
                     state.uiState.boardOffsetX,
                     state.uiState.boardOffsetY,
                     state.uiState.interactionMode,
+                    state.uiState.brushSelected,
+                    state.uiState.pendingLineStartIndex,
                     state.uiState.showColorPickerDialog,
                     state.uiState.showToolsDialog,
                     state.uiState.selectedToolsTab,
@@ -495,7 +688,8 @@ class BeadEditorState(
                     state.uiState.pendingGridHorizontalResizeDirection.name,
                     state.uiState.pendingGridVerticalResizeDirection.name,
                     ArrayList(state.uiState.recentColorIndices),
-                    state.uiState.templateRotation
+                    state.uiState.templateRotation,
+                    4
                 )
             },
             restore = { restored ->
@@ -506,10 +700,16 @@ class BeadEditorState(
                         gridColumns = restored[0] as Int,
                         gridRows = restored[1] as Int,
                         stitchModeId = restored[2] as String,
-                        beadShapeId = restored.getOrNull(22) as? String ?: BeadShape.defaults.id,
+                        beadShapeId = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored.getOrNull(24) as? String
+                            else -> restored.getOrNull(23) as? String
+                        } ?: BeadShape.defaults.id,
                         beads = restored[3] as ArrayList<Int>,
                         selectedColorIndex = restored[4] as Int,
-                        recentColorIndices = ((restored.getOrNull(26) as? ArrayList<*>)?.mapNotNull {
+                        recentColorIndices = ((when (restored.getOrNull(30) as? Int) {
+                            4 -> restored.getOrNull(28)
+                            else -> restored.getOrNull(27)
+                        } as? ArrayList<*>)?.mapNotNull {
                             (it as? Int)?.takeIf { index -> index >= 0 }
                         }?.distinct()?.take(MaxRecentColors)?.takeIf { it.isNotEmpty() })
                             ?: listOf((restored[4] as Int).coerceAtLeast(0)),
@@ -519,26 +719,71 @@ class BeadEditorState(
                         templateScale = restored[8] as Float,
                         templateOffsetX = restored[9] as Float,
                         templateOffsetY = restored[10] as Float,
-                        templateRotation = restored.getOrNull(27) as? Float ?: DefaultTemplateRotation,
+                        templateRotation = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored.getOrNull(29) as? Float
+                            else -> restored.getOrNull(28) as? Float
+                        } ?: DefaultTemplateRotation,
                         boardScale = restored[11] as Float,
                         boardOffsetX = restored[12] as Float,
                         boardOffsetY = restored[13] as Float,
-                        interactionMode = restored[14] as Int,
-                        showColorPickerDialog = restored[15] as Boolean,
-                        showToolsDialog = restored[16] as Boolean,
-                        selectedToolsTab = restored[17] as Int,
-                        pendingCameraUriString = restored[18] as String?,
-                        pendingSettingsStitchId = restored[19] as String,
-                        pendingSettingsGridColumns = restored[20] as Float,
-                        pendingSettingsGridRows = restored[21] as Float,
-                        pendingSettingsBeadShapeId = restored.getOrNull(23) as? String
+                        interactionMode = normalizeSavedInteractionMode(
+                            savedValue = restored[14] as Int,
+                            schemaVersion = restored.getOrNull(30) as? Int
+                        ),
+                        brushSelected = if ((restored.getOrNull(30) as? Int) == 4) {
+                            restored.getOrNull(15) as? Boolean ?: false
+                        } else {
+                            false
+                        },
+                        pendingLineStartIndex = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored.getOrNull(16) as? Int
+                            else -> restored.getOrNull(15) as? Int
+                        },
+                        showColorPickerDialog = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[17] as Boolean
+                            else -> restored[16] as Boolean
+                        },
+                        showToolsDialog = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[18] as Boolean
+                            else -> restored[17] as Boolean
+                        },
+                        selectedToolsTab = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[19] as Int
+                            else -> restored[18] as Int
+                        },
+                        pendingCameraUriString = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[20] as String?
+                            else -> restored[19] as String?
+                        },
+                        pendingSettingsStitchId = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[21] as String
+                            else -> restored[20] as String
+                        },
+                        pendingSettingsGridColumns = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[22] as Float
+                            else -> restored[21] as Float
+                        },
+                        pendingSettingsGridRows = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored[23] as Float
+                            else -> restored[22] as Float
+                        },
+                        pendingSettingsBeadShapeId = when (restored.getOrNull(30) as? Int) {
+                            4 -> restored.getOrNull(25) as? String
+                            else -> restored.getOrNull(24) as? String
+                        }
                             ?: BeadShape.defaults.id,
                         pendingGridHorizontalResizeDirection =
-                            (restored.getOrNull(24) as? String)?.let {
+                            (when (restored.getOrNull(30) as? Int) {
+                                4 -> restored.getOrNull(26)
+                                else -> restored.getOrNull(25)
+                            } as? String)?.let {
                                 runCatching { GridHorizontalResizeDirection.valueOf(it) }.getOrNull()
                             } ?: GridHorizontalResizeDirection.Right,
                         pendingGridVerticalResizeDirection =
-                            (restored.getOrNull(25) as? String)?.let {
+                            (when (restored.getOrNull(30) as? Int) {
+                                4 -> restored.getOrNull(27)
+                                else -> restored.getOrNull(26)
+                            } as? String)?.let {
                                 runCatching { GridVerticalResizeDirection.valueOf(it) }.getOrNull()
                             } ?: GridVerticalResizeDirection.Bottom
                     )
@@ -675,6 +920,144 @@ fun updateBeadAt(
     if (index !in beads.indices || beads[index] == nextColor) return beads
     return beads.toMutableList().apply {
         this[index] = nextColor
+    }
+}
+
+fun updateBeadsAt(
+    beads: List<Int>,
+    indices: List<Int>,
+    nextColor: Int
+): List<Int> {
+    if (indices.isEmpty()) return beads
+
+    var changed = false
+    val updated = beads.toMutableList()
+    indices.forEach { index ->
+        if (index in updated.indices && updated[index] != nextColor) {
+            updated[index] = nextColor
+            changed = true
+        }
+    }
+    return if (changed) updated else beads
+}
+
+fun fillConnectedRegion(
+    beads: List<Int>,
+    index: Int,
+    replacementColor: Int,
+    columns: Int
+): List<Int> {
+    if (index !in beads.indices || columns <= 0) return beads
+
+    val targetColor = beads[index]
+    if (targetColor == replacementColor) return beads
+
+    val rows = beads.size / columns
+    val updatedBeads = beads.toMutableList()
+    val pending = ArrayDeque<Int>()
+    pending.add(index)
+    updatedBeads[index] = replacementColor
+
+    while (pending.isNotEmpty()) {
+        val currentIndex = pending.removeFirst()
+        val row = currentIndex / columns
+        val column = currentIndex % columns
+
+        fun enqueueIfMatch(candidateIndex: Int) {
+            if (candidateIndex in beads.indices && updatedBeads[candidateIndex] == targetColor) {
+                updatedBeads[candidateIndex] = replacementColor
+                pending.add(candidateIndex)
+            }
+        }
+
+        if (column > 0) enqueueIfMatch(currentIndex - 1)
+        if (column < columns - 1) enqueueIfMatch(currentIndex + 1)
+        if (row > 0) enqueueIfMatch(currentIndex - columns)
+        if (row < rows - 1) enqueueIfMatch(currentIndex + columns)
+    }
+
+    return updatedBeads
+}
+
+fun drawLineOnGrid(
+    beads: List<Int>,
+    startIndex: Int,
+    endIndex: Int,
+    replacementColor: Int,
+    columns: Int
+): List<Int> {
+    if (startIndex !in beads.indices || endIndex !in beads.indices || columns <= 0) return beads
+
+    val lineIndices = calculateLineIndices(
+        startIndex = startIndex,
+        endIndex = endIndex,
+        columns = columns,
+        maxIndex = beads.lastIndex
+    )
+    val updatedBeads = beads.toMutableList()
+    var changed = false
+
+    lineIndices.forEach { index ->
+        if (index in updatedBeads.indices && updatedBeads[index] != replacementColor) {
+            updatedBeads[index] = replacementColor
+            changed = true
+        }
+    }
+
+    return if (changed) updatedBeads else beads
+}
+
+fun calculateLineIndices(
+    startIndex: Int,
+    endIndex: Int,
+    columns: Int,
+    maxIndex: Int
+): List<Int> {
+    if (startIndex !in 0..maxIndex || endIndex !in 0..maxIndex || columns <= 0) return emptyList()
+
+    val x0 = startIndex % columns
+    val y0 = startIndex / columns
+    val x1 = endIndex % columns
+    val y1 = endIndex / columns
+
+    val steps = maxOf(kotlin.math.abs(x1 - x0), kotlin.math.abs(y1 - y0))
+    if (steps == 0) return listOf(startIndex)
+
+    return buildList {
+        repeat(steps + 1) { step ->
+            val progress = step / steps.toFloat()
+            val x = kotlin.math.round(x0 + (x1 - x0) * progress).toInt()
+            val y = kotlin.math.round(y0 + (y1 - y0) * progress).toInt()
+            val index = y * columns + x
+            if (index in 0..maxIndex && (isEmpty() || last() != index)) {
+                add(index)
+            }
+        }
+    }
+}
+
+fun normalizeSavedInteractionMode(
+    savedValue: Int,
+    schemaVersion: Int?
+): Int = when (schemaVersion) {
+    null, 1 -> when (savedValue) {
+        1 -> InteractionModeTemplate
+        2 -> InteractionModeGrid
+        else -> InteractionModePaint
+    }
+    2 -> when (savedValue) {
+        1 -> InteractionModeFill
+        2 -> InteractionModeTemplate
+        3 -> InteractionModeGrid
+        else -> InteractionModePaint
+    }
+    else -> when (savedValue) {
+        InteractionModePaint,
+        InteractionModeFill,
+        InteractionModeLine,
+        InteractionModeTemplate,
+        InteractionModeGrid -> savedValue
+        else -> InteractionModePaint
     }
 }
 
