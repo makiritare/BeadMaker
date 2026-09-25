@@ -7,20 +7,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.FileProvider
-import androidx.core.net.toUri
 import com.example.beadmaker.ui.model.BeadShape
+import com.example.beadmaker.ui.model.InteractionMode
 import com.example.beadmaker.ui.model.StitchMode
-import java.io.File
-import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.UUID
+import java.net.URLDecoder
+import java.net.URLEncoder
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 const val DefaultGridColumns = 16
 const val DefaultGridRows = 16
@@ -33,19 +30,15 @@ const val MinTemplateScale = 0.2f
 const val MaxTemplateScale = 5.0f
 const val DefaultTemplateScale = 1.0f
 const val DefaultTemplateRotation = 0f
-const val MinBoardScale = 1.0f
+const val MinBoardScale = 0.5f
 const val MaxBoardScale = 6.0f
 const val DefaultBoardScale = 1.0f
-const val InteractionModePaint = 0
-const val InteractionModeFill = 1
-const val InteractionModeLine = 2
-const val InteractionModeTemplate = 3
-const val InteractionModeGrid = 4
-
+const val PaletteColorCount = 24
 private const val MaxUndoStackSize = 30
-private const val SavedPatternFileName = "saved_pattern.bm"
-private const val PatternFormatVersion = 1
+private const val SavedEditorStateVersion = 6
+private const val FirstStringEditorStateVersion = 5
 private const val MaxRecentColors = 6
+private const val MaxToolsTabIndex = 1
 
 enum class GridHorizontalResizeDirection {
     Left,
@@ -75,7 +68,7 @@ data class EditorUiState(
     val boardScale: Float = DefaultBoardScale,
     val boardOffsetX: Float = 0f,
     val boardOffsetY: Float = 0f,
-    val interactionMode: Int = InteractionModePaint,
+    val interactionMode: InteractionMode = InteractionMode.default,
     val brushSelected: Boolean = false,
     val pendingLineStartIndex: Int? = null,
     val pendingLineEndIndex: Int? = null,
@@ -90,7 +83,10 @@ data class EditorUiState(
     val pendingGridHorizontalResizeDirection: GridHorizontalResizeDirection =
         GridHorizontalResizeDirection.Right,
     val pendingGridVerticalResizeDirection: GridVerticalResizeDirection =
-        GridVerticalResizeDirection.Bottom
+        GridVerticalResizeDirection.Bottom,
+    val isCreatingPattern: Boolean = false,
+    val isImportingTemplate: Boolean = false,
+    val isPatternIoInProgress: Boolean = false
 )
 
 data class BoardSnapshot(
@@ -101,17 +97,41 @@ data class BoardSnapshot(
     val beads: List<Int>
 )
 
-class BeadEditorState(
-    context: Context,
-    initialUiState: EditorUiState = EditorUiState()
+class BeadEditorState private constructor(
+    private val providedAppContext: Context?,
+    initialUiState: EditorUiState = EditorUiState(),
+    @Suppress("UNUSED_PARAMETER") contextFreeMarker: Unit
 ) {
-    private val appContext = context.applicationContext
+    constructor(
+        context: Context,
+        initialUiState: EditorUiState = EditorUiState()
+    ) : this(
+        providedAppContext = context.applicationContext,
+        initialUiState = initialUiState,
+        contextFreeMarker = Unit
+    )
+
+    internal constructor(initialUiState: EditorUiState = EditorUiState()) : this(
+        providedAppContext = null,
+        initialUiState = initialUiState,
+        contextFreeMarker = Unit
+    )
+
+    private val appContext: Context by lazy {
+        requireNotNull(providedAppContext) {
+            "An Android context is required for template and pattern I/O."
+        }
+    }
+    private val patternStorage: PatternStorage by lazy { PatternStorage(appContext) }
+    private val templateImageStorage: TemplateImageStorage by lazy {
+        TemplateImageStorage(appContext)
+    }
     private val undoStack = mutableStateListOf<BoardSnapshot>()
     private val redoStack = mutableStateListOf<BoardSnapshot>()
     private var brushStrokeActive = false
     private var lastBrushIndex: Int? = null
 
-    var uiState by mutableStateOf(initialUiState)
+    var uiState by mutableStateOf(normalizeEditorUiState(initialUiState))
         private set
 
     val canUndo: Boolean
@@ -128,11 +148,11 @@ class BeadEditorState(
         uiState = uiState.copy(
             eraserSelected = nextEraserSelected,
             interactionMode = if (nextEraserSelected) {
-                InteractionModePaint
+                InteractionMode.Paint
             } else {
                 uiState.interactionMode
             },
-            brushSelected = if (nextEraserSelected && uiState.interactionMode != InteractionModePaint) {
+            brushSelected = if (nextEraserSelected && uiState.interactionMode != InteractionMode.Paint) {
                 false
             } else {
                 uiState.brushSelected
@@ -151,6 +171,7 @@ class BeadEditorState(
     }
 
     fun applySelectedColor(index: Int) {
+        if (index !in 0 until PaletteColorCount) return
         uiState = uiState.copy(
             selectedColorIndex = index,
             recentColorIndices = updateRecentColors(uiState.recentColorIndices, index),
@@ -163,7 +184,7 @@ class BeadEditorState(
 
     fun setPaintMode() {
         uiState = uiState.copy(
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             eraserSelected = false,
             brushSelected = false,
             pendingLineStartIndex = null,
@@ -173,7 +194,7 @@ class BeadEditorState(
 
     fun setBrushMode() {
         uiState = uiState.copy(
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             eraserSelected = false,
             brushSelected = true,
             pendingLineStartIndex = null,
@@ -183,7 +204,7 @@ class BeadEditorState(
 
     fun setFillMode() {
         uiState = uiState.copy(
-            interactionMode = InteractionModeFill,
+            interactionMode = InteractionMode.Fill,
             eraserSelected = false,
             brushSelected = false,
             pendingLineStartIndex = null,
@@ -193,7 +214,7 @@ class BeadEditorState(
 
     fun setLineMode() {
         uiState = uiState.copy(
-            interactionMode = InteractionModeLine,
+            interactionMode = InteractionMode.Line,
             eraserSelected = false,
             brushSelected = false,
             pendingLineStartIndex = null,
@@ -204,24 +225,10 @@ class BeadEditorState(
     fun toggleTemplateMode() {
         if (uiState.templateImageUriString == null) return
         uiState = uiState.copy(
-            interactionMode = if (uiState.interactionMode == InteractionModeTemplate) {
-                InteractionModePaint
+            interactionMode = if (uiState.interactionMode == InteractionMode.Template) {
+                InteractionMode.Paint
             } else {
-                InteractionModeTemplate
-            },
-            eraserSelected = false,
-            brushSelected = false,
-            pendingLineStartIndex = null,
-            pendingLineEndIndex = null
-        )
-    }
-
-    fun toggleGridMode() {
-        uiState = uiState.copy(
-            interactionMode = if (uiState.interactionMode == InteractionModeGrid) {
-                InteractionModePaint
-            } else {
-                InteractionModeGrid
+                InteractionMode.Template
             },
             eraserSelected = false,
             brushSelected = false,
@@ -236,7 +243,7 @@ class BeadEditorState(
     }
 
     fun paintBrushCell(index: Int) {
-        if (uiState.interactionMode != InteractionModePaint) return
+        if (uiState.interactionMode != InteractionMode.Paint || index !in uiState.beads.indices) return
 
         val nextColor = if (uiState.eraserSelected) EmptyBead else uiState.selectedColorIndex
         val updatedBeads = if (lastBrushIndex == null) {
@@ -275,7 +282,7 @@ class BeadEditorState(
 
     fun openToolsDialogAtTab(tabIndex: Int) {
         uiState = uiState.copy(
-            selectedToolsTab = tabIndex,
+            selectedToolsTab = tabIndex.coerceIn(0, MaxToolsTabIndex),
             pendingSettingsStitchId = uiState.stitchModeId,
             pendingSettingsBeadShapeId = uiState.beadShapeId,
             pendingSettingsGridColumns = uiState.gridColumns.toFloat(),
@@ -290,28 +297,38 @@ class BeadEditorState(
         uiState = uiState.copy(showToolsDialog = false)
     }
 
-    fun selectToolsTab(tabIndex: Int) {
-        uiState = uiState.copy(selectedToolsTab = tabIndex)
-    }
-
     fun updateTemplateOpacity(value: Float) {
-        uiState = uiState.copy(templateOpacity = value)
+        if (!value.isFinite()) return
+        uiState = uiState.copy(templateOpacity = value.coerceIn(MinTemplateOpacity, 1f))
     }
 
     fun updateTemplateTransform(panX: Float, panY: Float, zoom: Float, rotation: Float) {
+        val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val safePanX = panX.takeIf(Float::isFinite) ?: 0f
+        val safePanY = panY.takeIf(Float::isFinite) ?: 0f
+        val safeRotation = rotation.takeIf(Float::isFinite) ?: 0f
         uiState = uiState.copy(
-            templateScale = (uiState.templateScale * zoom).coerceIn(MinTemplateScale, MaxTemplateScale),
-            templateOffsetX = uiState.templateOffsetX + panX,
-            templateOffsetY = uiState.templateOffsetY + panY,
-            templateRotation = normalizeRotationDegrees(uiState.templateRotation + rotation)
+            templateScale = (uiState.templateScale * safeZoom)
+                .finiteOr(DefaultTemplateScale)
+                .coerceIn(MinTemplateScale, MaxTemplateScale),
+            templateOffsetX = (uiState.templateOffsetX + safePanX).finiteOr(0f),
+            templateOffsetY = (uiState.templateOffsetY + safePanY).finiteOr(0f),
+            templateRotation = normalizeRotationDegrees(
+                (uiState.templateRotation + safeRotation).finiteOr(DefaultTemplateRotation)
+            )
         )
     }
 
     fun updateBoardTransform(panX: Float, panY: Float, zoom: Float) {
+        val safeZoom = zoom.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val safePanX = panX.takeIf(Float::isFinite) ?: 0f
+        val safePanY = panY.takeIf(Float::isFinite) ?: 0f
         uiState = uiState.copy(
-            boardScale = (uiState.boardScale * zoom).coerceIn(MinBoardScale, MaxBoardScale),
-            boardOffsetX = uiState.boardOffsetX + panX,
-            boardOffsetY = uiState.boardOffsetY + panY
+            boardScale = (uiState.boardScale * safeZoom)
+                .finiteOr(DefaultBoardScale)
+                .coerceIn(MinBoardScale, MaxBoardScale),
+            boardOffsetX = (uiState.boardOffsetX + safePanX).finiteOr(0f),
+            boardOffsetY = (uiState.boardOffsetY + safePanY).finiteOr(0f)
         )
     }
 
@@ -341,19 +358,34 @@ class BeadEditorState(
             boardScale = DefaultBoardScale,
             boardOffsetX = 0f,
             boardOffsetY = 0f,
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             brushSelected = false
         )
     }
 
-    fun importTemplateFromPicker(uri: Uri) {
-        copyTemplateImageToCache(appContext, uri)?.let { cachedUri ->
+    suspend fun importTemplateFromPicker(uri: Uri): Boolean {
+        if (uiState.isImportingTemplate || uiState.isCreatingPattern) return false
+
+        val destinationFile = templateImageStorage.newCacheFile()
+        var installed = false
+        uiState = uiState.copy(isImportingTemplate = true)
+        return try {
+            val cachedUri = withContext(Dispatchers.IO) {
+                templateImageStorage.copyToCache(uri, destinationFile)
+            } ?: return false
             replaceTemplateImage(cachedUri.toString())
+            installed = true
             resetTemplateAndBoardAdjustments()
+            true
+        } finally {
+            if (!installed) destinationFile.delete()
+            uiState = uiState.copy(isImportingTemplate = false)
         }
     }
 
     fun prepareCameraTemplateCapture(uriString: String) {
+        val uri = uriString.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return
+        if (!templateImageStorage.isOwnedCaptureUri(uri)) return
         uiState = uiState.copy(pendingCameraUriString = uriString)
     }
 
@@ -363,7 +395,7 @@ class BeadEditorState(
             replaceTemplateImage(pendingUriString)
             resetTemplateAndBoardAdjustments()
         } else {
-            deleteTemplateCacheFile(appContext, pendingUriString)
+            templateImageStorage.delete(pendingUriString)
         }
         uiState = uiState.copy(pendingCameraUriString = null)
     }
@@ -375,8 +407,8 @@ class BeadEditorState(
             templateOffsetX = 0f,
             templateOffsetY = 0f,
             templateRotation = DefaultTemplateRotation,
-            interactionMode = if (uiState.interactionMode == InteractionModeTemplate) {
-                InteractionModePaint
+            interactionMode = if (uiState.interactionMode == InteractionMode.Template) {
+                InteractionMode.Paint
             } else {
                 uiState.interactionMode
             },
@@ -392,15 +424,75 @@ class BeadEditorState(
         )
     }
 
+    suspend fun createPatternFromTemplateImage(
+        paletteColors: List<Int>,
+        viewportWidth: Int,
+        viewportHeight: Int
+    ): Boolean {
+        val sourceState = uiState
+        val imageUri = sourceState.templateImageUriString?.let(Uri::parse) ?: return false
+        val supportedPaletteColors = paletteColors.take(PaletteColorCount)
+        if (
+            sourceState.isCreatingPattern ||
+            sourceState.isImportingTemplate ||
+            supportedPaletteColors.isEmpty() ||
+            viewportWidth <= 0 ||
+            viewportHeight <= 0
+        ) {
+            return false
+        }
+
+        uiState = sourceState.copy(isCreatingPattern = true)
+        return try {
+            val nextBeads = try {
+                withContext(Dispatchers.Default) {
+                    createPatternBeads(
+                        context = appContext,
+                        imageUri = imageUri,
+                        paletteColors = supportedPaletteColors,
+                        viewportWidth = viewportWidth,
+                        viewportHeight = viewportHeight,
+                        sourceState = sourceState
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+
+            if (
+                nextBeads == null ||
+                nextBeads == sourceState.beads ||
+                !uiState.hasSameTemplateConversionInputAs(sourceState)
+            ) {
+                false
+            } else {
+                pushSnapshot()
+                uiState = uiState.copy(
+                    beads = nextBeads,
+                    interactionMode = InteractionMode.Paint,
+                    brushSelected = false,
+                    eraserSelected = false,
+                    pendingLineStartIndex = null,
+                    pendingLineEndIndex = null
+                )
+                true
+            }
+        } finally {
+            uiState = uiState.copy(isCreatingPattern = false)
+        }
+    }
+
     fun paintCell(index: Int) {
-        if (uiState.interactionMode == InteractionModeTemplate) return
+        if (uiState.interactionMode == InteractionMode.Template || index !in uiState.beads.indices) return
 
         val nextColor = if (uiState.eraserSelected) {
             EmptyBead
         } else {
             uiState.selectedColorIndex
         }
-        if (uiState.interactionMode == InteractionModeLine) {
+        if (uiState.interactionMode == InteractionMode.Line) {
             val startIndex = uiState.pendingLineStartIndex
             if (startIndex == null) {
                 uiState = uiState.copy(
@@ -458,7 +550,7 @@ class BeadEditorState(
             return
         }
 
-        val updatedBeads = if (uiState.interactionMode == InteractionModeFill) {
+        val updatedBeads = if (uiState.interactionMode == InteractionMode.Fill) {
             fillConnectedRegion(
                 beads = uiState.beads,
                 index = index,
@@ -491,7 +583,7 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             brushSelected = false,
             pendingLineStartIndex = null,
             pendingLineEndIndex = null
@@ -511,7 +603,7 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             brushSelected = false,
             pendingLineStartIndex = null,
             pendingLineEndIndex = null
@@ -519,19 +611,31 @@ class BeadEditorState(
     }
 
     fun updatePendingStitch(id: String) {
-        uiState = uiState.copy(pendingSettingsStitchId = id)
+        uiState = uiState.copy(pendingSettingsStitchId = StitchMode.fromId(id).id)
     }
 
     fun updatePendingBeadShape(id: String) {
-        uiState = uiState.copy(pendingSettingsBeadShapeId = id)
+        uiState = uiState.copy(pendingSettingsBeadShapeId = BeadShape.fromId(id).id)
     }
 
     fun updatePendingGridColumns(value: Float) {
-        uiState = uiState.copy(pendingSettingsGridColumns = value)
+        if (!value.isFinite()) return
+        uiState = uiState.copy(
+            pendingSettingsGridColumns = value.coerceIn(
+                MinGridSize.toFloat(),
+                MaxGridSize.toFloat()
+            )
+        )
     }
 
     fun updatePendingGridRows(value: Float) {
-        uiState = uiState.copy(pendingSettingsGridRows = value)
+        if (!value.isFinite()) return
+        uiState = uiState.copy(
+            pendingSettingsGridRows = value.coerceIn(
+                MinGridSize.toFloat(),
+                MaxGridSize.toFloat()
+            )
+        )
     }
 
     fun updatePendingGridHorizontalResizeDirection(direction: GridHorizontalResizeDirection) {
@@ -543,8 +647,14 @@ class BeadEditorState(
     }
 
     fun applyPendingGridSettings() {
-        val updatedColumns = uiState.pendingSettingsGridColumns.toInt()
-        val updatedRows = uiState.pendingSettingsGridRows.toInt()
+        val updatedColumns = uiState.pendingSettingsGridColumns
+            .finiteOr(uiState.gridColumns.toFloat())
+            .toInt()
+            .coerceIn(MinGridSize, MaxGridSize)
+        val updatedRows = uiState.pendingSettingsGridRows
+            .finiteOr(uiState.gridRows.toFloat())
+            .toInt()
+            .coerceIn(MinGridSize, MaxGridSize)
         val updatedStitchModeId = StitchMode.fromId(uiState.pendingSettingsStitchId).id
         val updatedBeadShapeId = BeadShape.fromId(uiState.pendingSettingsBeadShapeId).id
         val gridChanged = updatedColumns != uiState.gridColumns || updatedRows != uiState.gridRows
@@ -577,45 +687,55 @@ class BeadEditorState(
         )
     }
 
-    fun savePattern(): Boolean {
-        return runCatching {
-            File(appContext.filesDir, SavedPatternFileName).writeText(
-                text = serializeBoardSnapshot(currentSnapshot()),
-                charset = Charsets.UTF_8
-            )
-            true
-        }.getOrDefault(false)
-    }
+    suspend fun savePattern(): Boolean {
+        if (uiState.isPatternIoInProgress) return false
 
-    fun loadSavedPattern(): Boolean {
-        val saveFile = File(appContext.filesDir, SavedPatternFileName)
-        if (!saveFile.exists()) return false
-        val snapshot = runCatching {
-            deserializeBoardSnapshot(saveFile.readText(Charsets.UTF_8))
-        }.getOrNull() ?: return false
-
-        applySnapshot(snapshot)
-        return true
-    }
-
-    fun exportPatternToUri(uri: Uri): Boolean {
-        val payload = serializeBoardSnapshot(currentSnapshot())
-        return runCatching {
-            val stream = appContext.contentResolver.openOutputStream(uri) ?: return@runCatching false
-            stream.bufferedWriter(Charsets.UTF_8).use {
-                it.write(payload)
+        val snapshot = currentSnapshot()
+        uiState = uiState.copy(isPatternIoInProgress = true)
+        return try {
+            withContext(Dispatchers.IO) {
+                patternStorage.save(snapshot)
             }
+        } finally {
+            uiState = uiState.copy(isPatternIoInProgress = false)
+        }
+    }
+
+    suspend fun loadSavedPattern(): Boolean {
+        if (uiState.isPatternIoInProgress) return false
+
+        uiState = uiState.copy(isPatternIoInProgress = true)
+        return try {
+            val snapshot = withContext(Dispatchers.IO) {
+                patternStorage.load()
+            } ?: return false
+            applySnapshot(snapshot)
             true
-        }.getOrDefault(false)
+        } finally {
+            uiState = uiState.copy(isPatternIoInProgress = false)
+        }
+    }
+
+    suspend fun exportPatternToUri(uri: Uri): Boolean {
+        if (uiState.isPatternIoInProgress) return false
+
+        val snapshot = currentSnapshot()
+        uiState = uiState.copy(isPatternIoInProgress = true)
+        return try {
+            withContext(Dispatchers.IO) {
+                patternStorage.export(uri, snapshot)
+            }
+        } finally {
+            uiState = uiState.copy(isPatternIoInProgress = false)
+        }
     }
 
     fun suggestedExportFileName(): String {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        return "bead_pattern_$timestamp.bm"
+        return patternStorage.suggestedExportFileName()
     }
 
     private fun replaceTemplateImage(newUriString: String?) {
-        deleteTemplateCacheFile(appContext, uiState.templateImageUriString)
+        templateImageStorage.delete(uiState.templateImageUriString)
         uiState = uiState.copy(templateImageUriString = newUriString)
     }
 
@@ -650,148 +770,329 @@ class BeadEditorState(
             pendingSettingsBeadShapeId = snapshot.beadShapeId,
             pendingSettingsGridColumns = snapshot.gridColumns.toFloat(),
             pendingSettingsGridRows = snapshot.gridRows.toFloat(),
-            interactionMode = InteractionModePaint,
+            interactionMode = InteractionMode.Paint,
             brushSelected = false
         )
     }
 
     companion object {
-        fun Saver(context: Context): Saver<BeadEditorState, Any> = listSaver(
-            save = { state ->
-                listOf(
-                    state.uiState.gridColumns,
-                    state.uiState.gridRows,
-                    state.uiState.stitchModeId,
-                    ArrayList(state.uiState.beads),
-                    state.uiState.selectedColorIndex,
-                    state.uiState.eraserSelected,
-                    state.uiState.templateImageUriString,
-                    state.uiState.templateOpacity,
-                    state.uiState.templateScale,
-                    state.uiState.templateOffsetX,
-                    state.uiState.templateOffsetY,
-                    state.uiState.boardScale,
-                    state.uiState.boardOffsetX,
-                    state.uiState.boardOffsetY,
-                    state.uiState.interactionMode,
-                    state.uiState.brushSelected,
-                    state.uiState.pendingLineStartIndex,
-                    state.uiState.showColorPickerDialog,
-                    state.uiState.showToolsDialog,
-                    state.uiState.selectedToolsTab,
-                    state.uiState.pendingCameraUriString,
-                    state.uiState.pendingSettingsStitchId,
-                    state.uiState.pendingSettingsGridColumns,
-                    state.uiState.pendingSettingsGridRows,
-                    state.uiState.beadShapeId,
-                    state.uiState.pendingSettingsBeadShapeId,
-                    state.uiState.pendingGridHorizontalResizeDirection.name,
-                    state.uiState.pendingGridVerticalResizeDirection.name,
-                    ArrayList(state.uiState.recentColorIndices),
-                    state.uiState.templateRotation,
-                    4
-                )
-            },
+        fun Saver(context: Context): Saver<BeadEditorState, Any> = Saver(
+            save = { state -> serializeEditorUiState(state.uiState) },
             restore = { restored ->
-                @Suppress("UNCHECKED_CAST")
-                BeadEditorState(
-                    context = context,
-                    initialUiState = EditorUiState(
-                        gridColumns = restored[0] as Int,
-                        gridRows = restored[1] as Int,
-                        stitchModeId = restored[2] as String,
-                        beadShapeId = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored.getOrNull(24) as? String
-                            else -> restored.getOrNull(23) as? String
-                        } ?: BeadShape.defaults.id,
-                        beads = restored[3] as ArrayList<Int>,
-                        selectedColorIndex = restored[4] as Int,
-                        recentColorIndices = ((when (restored.getOrNull(30) as? Int) {
-                            4 -> restored.getOrNull(28)
-                            else -> restored.getOrNull(27)
-                        } as? ArrayList<*>)?.mapNotNull {
-                            (it as? Int)?.takeIf { index -> index >= 0 }
-                        }?.distinct()?.take(MaxRecentColors)?.takeIf { it.isNotEmpty() })
-                            ?: listOf((restored[4] as Int).coerceAtLeast(0)),
-                        eraserSelected = restored[5] as Boolean,
-                        templateImageUriString = restored[6] as String?,
-                        templateOpacity = restored[7] as Float,
-                        templateScale = restored[8] as Float,
-                        templateOffsetX = restored[9] as Float,
-                        templateOffsetY = restored[10] as Float,
-                        templateRotation = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored.getOrNull(29) as? Float
-                            else -> restored.getOrNull(28) as? Float
-                        } ?: DefaultTemplateRotation,
-                        boardScale = restored[11] as Float,
-                        boardOffsetX = restored[12] as Float,
-                        boardOffsetY = restored[13] as Float,
-                        interactionMode = normalizeSavedInteractionMode(
-                            savedValue = restored[14] as Int,
-                            schemaVersion = restored.getOrNull(30) as? Int
-                        ),
-                        brushSelected = if ((restored.getOrNull(30) as? Int) == 4) {
-                            restored.getOrNull(15) as? Boolean ?: false
-                        } else {
-                            false
-                        },
-                        pendingLineStartIndex = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored.getOrNull(16) as? Int
-                            else -> restored.getOrNull(15) as? Int
-                        },
-                        showColorPickerDialog = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[17] as Boolean
-                            else -> restored[16] as Boolean
-                        },
-                        showToolsDialog = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[18] as Boolean
-                            else -> restored[17] as Boolean
-                        },
-                        selectedToolsTab = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[19] as Int
-                            else -> restored[18] as Int
-                        },
-                        pendingCameraUriString = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[20] as String?
-                            else -> restored[19] as String?
-                        },
-                        pendingSettingsStitchId = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[21] as String
-                            else -> restored[20] as String
-                        },
-                        pendingSettingsGridColumns = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[22] as Float
-                            else -> restored[21] as Float
-                        },
-                        pendingSettingsGridRows = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored[23] as Float
-                            else -> restored[22] as Float
-                        },
-                        pendingSettingsBeadShapeId = when (restored.getOrNull(30) as? Int) {
-                            4 -> restored.getOrNull(25) as? String
-                            else -> restored.getOrNull(24) as? String
-                        }
-                            ?: BeadShape.defaults.id,
-                        pendingGridHorizontalResizeDirection =
-                            (when (restored.getOrNull(30) as? Int) {
-                                4 -> restored.getOrNull(26)
-                                else -> restored.getOrNull(25)
-                            } as? String)?.let {
-                                runCatching { GridHorizontalResizeDirection.valueOf(it) }.getOrNull()
-                            } ?: GridHorizontalResizeDirection.Right,
-                        pendingGridVerticalResizeDirection =
-                            (when (restored.getOrNull(30) as? Int) {
-                                4 -> restored.getOrNull(27)
-                                else -> restored.getOrNull(26)
-                            } as? String)?.let {
-                                runCatching { GridVerticalResizeDirection.valueOf(it) }.getOrNull()
-                            } ?: GridVerticalResizeDirection.Bottom
-                    )
-                )
+                restoreEditorUiState(restored)?.let { restoredState ->
+                    BeadEditorState(context = context, initialUiState = restoredState)
+                }
             }
         )
     }
 }
+
+internal fun serializeEditorUiState(state: EditorUiState): String = buildString {
+    fun appendField(key: String, value: Any?) {
+        append(key)
+        append('=')
+        append(URLEncoder.encode(value?.toString().orEmpty(), Charsets.UTF_8.name()))
+        append('\n')
+    }
+
+    appendField("version", SavedEditorStateVersion)
+    appendField("gridColumns", state.gridColumns)
+    appendField("gridRows", state.gridRows)
+    appendField("stitchModeId", state.stitchModeId)
+    appendField("beadShapeId", state.beadShapeId)
+    appendField("beads", state.beads.joinToString(","))
+    appendField("selectedColorIndex", state.selectedColorIndex)
+    appendField("recentColorIndices", state.recentColorIndices.joinToString(","))
+    appendField("eraserSelected", state.eraserSelected)
+    appendField("templateImageUriString", state.templateImageUriString)
+    appendField("templateOpacity", state.templateOpacity)
+    appendField("templateScale", state.templateScale)
+    appendField("templateOffsetX", state.templateOffsetX)
+    appendField("templateOffsetY", state.templateOffsetY)
+    appendField("templateRotation", state.templateRotation)
+    appendField("boardScale", state.boardScale)
+    appendField("boardOffsetX", state.boardOffsetX)
+    appendField("boardOffsetY", state.boardOffsetY)
+    appendField("interactionMode", state.interactionMode.id)
+    appendField("brushSelected", state.brushSelected)
+    appendField("pendingLineStartIndex", state.pendingLineStartIndex)
+    appendField("pendingLineEndIndex", state.pendingLineEndIndex)
+    appendField("showColorPickerDialog", state.showColorPickerDialog)
+    appendField("showToolsDialog", state.showToolsDialog)
+    appendField("selectedToolsTab", state.selectedToolsTab)
+    appendField("pendingCameraUriString", state.pendingCameraUriString)
+    appendField("pendingSettingsStitchId", state.pendingSettingsStitchId)
+    appendField("pendingSettingsBeadShapeId", state.pendingSettingsBeadShapeId)
+    appendField("pendingSettingsGridColumns", state.pendingSettingsGridColumns)
+    appendField("pendingSettingsGridRows", state.pendingSettingsGridRows)
+    appendField(
+        "pendingGridHorizontalResizeDirection",
+        state.pendingGridHorizontalResizeDirection.name
+    )
+    appendField(
+        "pendingGridVerticalResizeDirection",
+        state.pendingGridVerticalResizeDirection.name
+    )
+}
+
+internal fun restoreEditorUiState(saved: Any): EditorUiState? = when (saved) {
+    is String -> deserializeEditorUiState(saved)
+    is List<*> -> restoreLegacyEditorUiState(saved)
+    else -> null
+}
+
+internal fun deserializeEditorUiState(serialized: String): EditorUiState? {
+    val values = runCatching {
+        serialized.lineSequence()
+            .filter { it.isNotEmpty() }
+            .associate { line ->
+                val separatorIndex = line.indexOf('=')
+                require(separatorIndex > 0)
+                line.substring(0, separatorIndex) to URLDecoder.decode(
+                    line.substring(separatorIndex + 1),
+                    Charsets.UTF_8.name()
+                )
+            }
+    }.getOrNull() ?: return null
+
+    val savedStateVersion = values["version"]?.toIntOrNull() ?: return null
+    if (savedStateVersion !in FirstStringEditorStateVersion..SavedEditorStateVersion) return null
+
+    val gridColumns = values["gridColumns"]?.toIntOrNull() ?: return null
+    val gridRows = values["gridRows"]?.toIntOrNull() ?: return null
+    val beads = parseSavedIntList(values["beads"]) ?: return null
+    val selectedColorIndex = values["selectedColorIndex"]?.toIntOrNull() ?: 0
+    val lineStart = values["pendingLineStartIndex"]?.toIntOrNull()
+    val lineEnd = values["pendingLineEndIndex"]?.toIntOrNull()
+
+    return sanitizeRestoredEditorUiState(
+        EditorUiState(
+            gridColumns = gridColumns,
+            gridRows = gridRows,
+            stitchModeId = values["stitchModeId"].orEmpty(),
+            beadShapeId = values["beadShapeId"].orEmpty(),
+            beads = beads,
+            selectedColorIndex = selectedColorIndex,
+            recentColorIndices = parseSavedIntList(values["recentColorIndices"])
+                ?: listOf(selectedColorIndex),
+            eraserSelected = values["eraserSelected"]?.toBooleanStrictOrNull() ?: false,
+            templateImageUriString = values["templateImageUriString"].nullIfEmpty(),
+            templateOpacity = values["templateOpacity"]?.toFloatOrNull()
+                ?: DefaultTemplateOpacity,
+            templateScale = values["templateScale"]?.toFloatOrNull() ?: DefaultTemplateScale,
+            templateOffsetX = values["templateOffsetX"]?.toFloatOrNull() ?: 0f,
+            templateOffsetY = values["templateOffsetY"]?.toFloatOrNull() ?: 0f,
+            templateRotation = values["templateRotation"]?.toFloatOrNull()
+                ?: DefaultTemplateRotation,
+            boardScale = values["boardScale"]?.toFloatOrNull() ?: DefaultBoardScale,
+            boardOffsetX = values["boardOffsetX"]?.toFloatOrNull() ?: 0f,
+            boardOffsetY = values["boardOffsetY"]?.toFloatOrNull() ?: 0f,
+            interactionMode = if (savedStateVersion >= SavedEditorStateVersion) {
+                InteractionMode.fromId(values["interactionMode"].orEmpty())
+            } else {
+                normalizeSavedInteractionMode(
+                    savedValue = values["interactionMode"]?.toIntOrNull() ?: 0,
+                    schemaVersion = savedStateVersion
+                )
+            },
+            brushSelected = values["brushSelected"]?.toBooleanStrictOrNull() ?: false,
+            pendingLineStartIndex = lineStart,
+            pendingLineEndIndex = lineEnd,
+            showColorPickerDialog = values["showColorPickerDialog"]?.toBooleanStrictOrNull()
+                ?: false,
+            showToolsDialog = values["showToolsDialog"]?.toBooleanStrictOrNull() ?: false,
+            selectedToolsTab = values["selectedToolsTab"]?.toIntOrNull() ?: 0,
+            pendingCameraUriString = values["pendingCameraUriString"].nullIfEmpty(),
+            pendingSettingsStitchId = values["pendingSettingsStitchId"].orEmpty(),
+            pendingSettingsBeadShapeId = values["pendingSettingsBeadShapeId"].orEmpty(),
+            pendingSettingsGridColumns = values["pendingSettingsGridColumns"]?.toFloatOrNull()
+                ?: gridColumns.toFloat(),
+            pendingSettingsGridRows = values["pendingSettingsGridRows"]?.toFloatOrNull()
+                ?: gridRows.toFloat(),
+            pendingGridHorizontalResizeDirection = values["pendingGridHorizontalResizeDirection"]
+                ?.let { runCatching { GridHorizontalResizeDirection.valueOf(it) }.getOrNull() }
+                ?: GridHorizontalResizeDirection.Right,
+            pendingGridVerticalResizeDirection = values["pendingGridVerticalResizeDirection"]
+                ?.let { runCatching { GridVerticalResizeDirection.valueOf(it) }.getOrNull() }
+                ?: GridVerticalResizeDirection.Bottom
+        )
+    )
+}
+
+private fun restoreLegacyEditorUiState(restored: List<*>): EditorUiState? {
+    val schemaVersion = (restored.lastOrNull() as? Number)?.toInt()?.takeIf { it in 2..4 }
+    val versionFourLayout = schemaVersion == 4
+    val gridColumns = (restored.getOrNull(0) as? Number)?.toInt() ?: return null
+    val gridRows = (restored.getOrNull(1) as? Number)?.toInt() ?: return null
+    val beads = (restored.getOrNull(3) as? List<*>)?.map { value ->
+        (value as? Number)?.toInt() ?: return null
+    } ?: return null
+    val selectedColorIndex = (restored.getOrNull(4) as? Number)?.toInt() ?: 0
+    fun valueAt(versionFourIndex: Int, legacyIndex: Int): Any? =
+        restored.getOrNull(if (versionFourLayout) versionFourIndex else legacyIndex)
+
+    return sanitizeRestoredEditorUiState(
+        EditorUiState(
+            gridColumns = gridColumns,
+            gridRows = gridRows,
+            stitchModeId = restored.getOrNull(2) as? String ?: StitchMode.defaults.id,
+            beadShapeId = valueAt(24, 23) as? String ?: BeadShape.defaults.id,
+            beads = beads,
+            selectedColorIndex = selectedColorIndex,
+            recentColorIndices = (valueAt(28, 27) as? List<*>)?.mapNotNull { value ->
+                (value as? Number)?.toInt()
+            } ?: listOf(selectedColorIndex),
+            eraserSelected = restored.getOrNull(5) as? Boolean ?: false,
+            templateImageUriString = restored.getOrNull(6) as? String,
+            templateOpacity = (restored.getOrNull(7) as? Number)?.toFloat()
+                ?: DefaultTemplateOpacity,
+            templateScale = (restored.getOrNull(8) as? Number)?.toFloat()
+                ?: DefaultTemplateScale,
+            templateOffsetX = (restored.getOrNull(9) as? Number)?.toFloat() ?: 0f,
+            templateOffsetY = (restored.getOrNull(10) as? Number)?.toFloat() ?: 0f,
+            templateRotation = (valueAt(29, 28) as? Number)?.toFloat()
+                ?: DefaultTemplateRotation,
+            boardScale = (restored.getOrNull(11) as? Number)?.toFloat() ?: DefaultBoardScale,
+            boardOffsetX = (restored.getOrNull(12) as? Number)?.toFloat() ?: 0f,
+            boardOffsetY = (restored.getOrNull(13) as? Number)?.toFloat() ?: 0f,
+            interactionMode = normalizeSavedInteractionMode(
+                savedValue = (restored.getOrNull(14) as? Number)?.toInt()
+                    ?: 0,
+                schemaVersion = schemaVersion
+            ),
+            brushSelected = if (versionFourLayout) {
+                restored.getOrNull(15) as? Boolean ?: false
+            } else {
+                false
+            },
+            pendingLineStartIndex = (valueAt(16, 15) as? Number)?.toInt(),
+            showColorPickerDialog = valueAt(17, 16) as? Boolean ?: false,
+            showToolsDialog = valueAt(18, 17) as? Boolean ?: false,
+            selectedToolsTab = (valueAt(19, 18) as? Number)?.toInt() ?: 0,
+            pendingCameraUriString = valueAt(20, 19) as? String,
+            pendingSettingsStitchId = valueAt(21, 20) as? String ?: StitchMode.defaults.id,
+            pendingSettingsGridColumns = (valueAt(22, 21) as? Number)?.toFloat()
+                ?: gridColumns.toFloat(),
+            pendingSettingsGridRows = (valueAt(23, 22) as? Number)?.toFloat()
+                ?: gridRows.toFloat(),
+            pendingSettingsBeadShapeId = valueAt(25, 24) as? String
+                ?: BeadShape.defaults.id,
+            pendingGridHorizontalResizeDirection = (valueAt(26, 25) as? String)?.let {
+                runCatching { GridHorizontalResizeDirection.valueOf(it) }.getOrNull()
+            } ?: GridHorizontalResizeDirection.Right,
+            pendingGridVerticalResizeDirection = (valueAt(27, 26) as? String)?.let {
+                runCatching { GridVerticalResizeDirection.valueOf(it) }.getOrNull()
+            } ?: GridVerticalResizeDirection.Bottom
+        )
+    )
+}
+
+private fun sanitizeRestoredEditorUiState(state: EditorUiState): EditorUiState? {
+    if (state.gridColumns !in MinGridSize..MaxGridSize || state.gridRows !in MinGridSize..MaxGridSize) {
+        return null
+    }
+    if (
+        state.beads.size != state.gridColumns * state.gridRows ||
+        state.beads.any { it !in EmptyBead until PaletteColorCount }
+    ) {
+        return null
+    }
+
+    return normalizeEditorUiState(state).copy(
+        isCreatingPattern = false,
+        isImportingTemplate = false,
+        isPatternIoInProgress = false
+    )
+}
+
+internal fun normalizeEditorUiState(state: EditorUiState): EditorUiState {
+    val gridColumns = state.gridColumns.coerceIn(MinGridSize, MaxGridSize)
+    val gridRows = state.gridRows.coerceIn(MinGridSize, MaxGridSize)
+    val expectedBeadCount = gridColumns * gridRows
+    val beads = List(expectedBeadCount) { index ->
+        state.beads.getOrNull(index)
+            ?.takeIf { it in EmptyBead until PaletteColorCount }
+            ?: EmptyBead
+    }
+    val selectedColorIndex = state.selectedColorIndex.takeIf {
+        it in 0 until PaletteColorCount
+    } ?: 0
+    val validRecentColors = state.recentColorIndices
+        .filter { it in 0 until PaletteColorCount }
+        .distinct()
+        .take(MaxRecentColors)
+    val recentColors = updateRecentColors(
+        existing = validRecentColors,
+        selectedIndex = selectedColorIndex,
+        maxSize = MaxRecentColors
+    )
+    val lineStart = state.pendingLineStartIndex?.takeIf { it in beads.indices }
+    val lineEnd = state.pendingLineEndIndex?.takeIf {
+        lineStart != null && it in beads.indices
+    }
+    val templateImageUriString = state.templateImageUriString.nullIfEmpty()
+    val interactionMode = state.interactionMode.let { mode ->
+        if (mode == InteractionMode.Template && templateImageUriString == null) {
+            InteractionMode.Paint
+        } else {
+            mode
+        }
+    }
+
+    return state.copy(
+        gridColumns = gridColumns,
+        gridRows = gridRows,
+        stitchModeId = StitchMode.fromId(state.stitchModeId).id,
+        beadShapeId = BeadShape.fromId(state.beadShapeId).id,
+        beads = beads,
+        selectedColorIndex = selectedColorIndex,
+        recentColorIndices = recentColors,
+        templateImageUriString = templateImageUriString,
+        templateOpacity = state.templateOpacity.finiteOr(DefaultTemplateOpacity).coerceIn(
+            MinTemplateOpacity,
+            1f
+        ),
+        templateScale = state.templateScale.finiteOr(DefaultTemplateScale).coerceIn(
+            MinTemplateScale,
+            MaxTemplateScale
+        ),
+        templateOffsetX = state.templateOffsetX.finiteOr(0f),
+        templateOffsetY = state.templateOffsetY.finiteOr(0f),
+        templateRotation = normalizeRotationDegrees(
+            state.templateRotation.finiteOr(DefaultTemplateRotation)
+        ),
+        boardScale = state.boardScale.finiteOr(DefaultBoardScale).coerceIn(
+            MinBoardScale,
+            MaxBoardScale
+        ),
+        boardOffsetX = state.boardOffsetX.finiteOr(0f),
+        boardOffsetY = state.boardOffsetY.finiteOr(0f),
+        interactionMode = interactionMode,
+        brushSelected = state.brushSelected && interactionMode == InteractionMode.Paint,
+        pendingLineStartIndex = lineStart,
+        pendingLineEndIndex = lineEnd,
+        selectedToolsTab = state.selectedToolsTab.coerceIn(0, MaxToolsTabIndex),
+        pendingCameraUriString = state.pendingCameraUriString.nullIfEmpty(),
+        pendingSettingsStitchId = StitchMode.fromId(state.pendingSettingsStitchId).id,
+        pendingSettingsBeadShapeId = BeadShape.fromId(state.pendingSettingsBeadShapeId).id,
+        pendingSettingsGridColumns = state.pendingSettingsGridColumns
+            .finiteOr(gridColumns.toFloat())
+            .coerceIn(MinGridSize.toFloat(), MaxGridSize.toFloat()),
+        pendingSettingsGridRows = state.pendingSettingsGridRows
+            .finiteOr(gridRows.toFloat())
+            .coerceIn(MinGridSize.toFloat(), MaxGridSize.toFloat())
+    )
+}
+
+private fun parseSavedIntList(value: String?): List<Int>? {
+    if (value == null) return null
+    if (value.isEmpty()) return emptyList()
+    return value.split(',').map { token -> token.toIntOrNull() ?: return null }
+}
+
+private fun String?.nullIfEmpty(): String? = this?.takeIf { it.isNotEmpty() }
+
+private fun Float.finiteOr(defaultValue: Float): Float = if (isFinite()) this else defaultValue
 
 @Composable
 fun rememberBeadEditorState(
@@ -802,49 +1103,8 @@ fun rememberBeadEditorState(
     }
 }
 
-fun createTemplateCaptureUri(context: Context): Uri? {
-    return runCatching {
-        val imageDirectory = File(context.cacheDir, "template_images").apply {
-            if (!exists()) mkdirs()
-        }
-        val imageFile = File(imageDirectory, "template_${UUID.randomUUID()}.jpg").apply {
-            createNewFile()
-        }
-        FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            imageFile
-        )
-    }.getOrNull()
-}
-
-fun copyTemplateImageToCache(context: Context, sourceUri: Uri): Uri? {
-    return runCatching {
-        val imageDirectory = File(context.cacheDir, "template_images").apply {
-            if (!exists() && !mkdirs()) {
-                throw IOException("Failed to create template_images cache directory.")
-            }
-        }
-        val imageFile = File(imageDirectory, "template_${UUID.randomUUID()}.jpg")
-        context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
-            imageFile.outputStream().use { outputStream ->
-                inputStream.copyTo(outputStream)
-            }
-        } ?: throw IOException("Failed to open template image stream.")
-        imageFile.toUri()
-    }.getOrNull()
-}
-
-fun deleteTemplateCacheFile(context: Context, uriString: String?) {
-    val cachedTemplateUri = uriString?.let(Uri::parse) ?: return
-    val cachedTemplateFile = cachedTemplateUri.path?.let(::File) ?: return
-    val cacheDirectory = File(context.cacheDir, "template_images")
-    if (cachedTemplateFile.parentFile == cacheDirectory && cachedTemplateFile.exists()) {
-        cachedTemplateFile.delete()
-    }
-}
-
 fun normalizeRotationDegrees(degrees: Float): Float {
+    if (!degrees.isFinite()) return DefaultTemplateRotation
     var normalized = degrees % 360f
     if (normalized > 180f) {
         normalized -= 360f
@@ -863,7 +1123,10 @@ fun resizeBeadGrid(
     horizontalDirection: GridHorizontalResizeDirection = GridHorizontalResizeDirection.Right,
     verticalDirection: GridVerticalResizeDirection = GridVerticalResizeDirection.Bottom
 ): List<Int> {
-    val resizedBeads = MutableList(newColumns * newRows) { EmptyBead }
+    val newSize = newColumns.toLong() * newRows
+    if (newColumns <= 0 || newRows <= 0 || newSize > Int.MAX_VALUE) return emptyList()
+    val resizedBeads = MutableList(newSize.toInt()) { EmptyBead }
+    if (oldColumns <= 0 || oldRows <= 0) return resizedBeads
     val preservedColumns = minOf(oldColumns, newColumns)
     val preservedRows = minOf(oldRows, newRows)
     val sourceStartColumn = when (horizontalDirection) {
@@ -889,7 +1152,9 @@ fun resizeBeadGrid(
                 (sourceStartRow + rowIndex) * oldColumns + (sourceStartColumn + columnIndex)
             val targetIndex =
                 (targetStartRow + rowIndex) * newColumns + (targetStartColumn + columnIndex)
-            resizedBeads[targetIndex] = beads[sourceIndex]
+            resizedBeads[targetIndex] = beads.getOrNull(sourceIndex)
+                ?.takeIf(::isValidBeadColor)
+                ?: EmptyBead
         }
     }
 
@@ -901,15 +1166,19 @@ fun updateRecentColors(
     selectedIndex: Int,
     maxSize: Int = MaxRecentColors
 ): List<Int> {
-    if (maxSize <= 0 || selectedIndex < 0) return existing
+    if (maxSize <= 0 || selectedIndex !in 0 until PaletteColorCount) return existing
     return buildList {
         add(selectedIndex)
         existing.forEach { index ->
-            if (index >= 0 && index != selectedIndex && size < maxSize) {
+            if (index in 0 until PaletteColorCount && index != selectedIndex && size < maxSize) {
                 add(index)
             }
         }
     }
+}
+
+fun isValidBeadColor(colorIndex: Int): Boolean {
+    return colorIndex in EmptyBead until PaletteColorCount
 }
 
 fun updateBeadAt(
@@ -917,7 +1186,9 @@ fun updateBeadAt(
     index: Int,
     nextColor: Int
 ): List<Int> {
-    if (index !in beads.indices || beads[index] == nextColor) return beads
+    if (index !in beads.indices || !isValidBeadColor(nextColor) || beads[index] == nextColor) {
+        return beads
+    }
     return beads.toMutableList().apply {
         this[index] = nextColor
     }
@@ -928,7 +1199,7 @@ fun updateBeadsAt(
     indices: List<Int>,
     nextColor: Int
 ): List<Int> {
-    if (indices.isEmpty()) return beads
+    if (indices.isEmpty() || !isValidBeadColor(nextColor)) return beads
 
     var changed = false
     val updated = beads.toMutableList()
@@ -947,7 +1218,9 @@ fun fillConnectedRegion(
     replacementColor: Int,
     columns: Int
 ): List<Int> {
-    if (index !in beads.indices || columns <= 0) return beads
+    if (index !in beads.indices || columns <= 0 || !isValidBeadColor(replacementColor)) {
+        return beads
+    }
 
     val targetColor = beads[index]
     if (targetColor == replacementColor) return beads
@@ -986,7 +1259,14 @@ fun drawLineOnGrid(
     replacementColor: Int,
     columns: Int
 ): List<Int> {
-    if (startIndex !in beads.indices || endIndex !in beads.indices || columns <= 0) return beads
+    if (
+        startIndex !in beads.indices ||
+        endIndex !in beads.indices ||
+        columns <= 0 ||
+        !isValidBeadColor(replacementColor)
+    ) {
+        return beads
+    }
 
     val lineIndices = calculateLineIndices(
         startIndex = startIndex,
@@ -1039,82 +1319,26 @@ fun calculateLineIndices(
 fun normalizeSavedInteractionMode(
     savedValue: Int,
     schemaVersion: Int?
-): Int = when (schemaVersion) {
+): InteractionMode = when (schemaVersion) {
     null, 1 -> when (savedValue) {
-        1 -> InteractionModeTemplate
-        2 -> InteractionModeGrid
-        else -> InteractionModePaint
+        1 -> InteractionMode.Template
+        2 -> InteractionMode.Grid
+        else -> InteractionMode.Paint
     }
     2 -> when (savedValue) {
-        1 -> InteractionModeFill
-        2 -> InteractionModeTemplate
-        3 -> InteractionModeGrid
-        else -> InteractionModePaint
+        1 -> InteractionMode.Fill
+        2 -> InteractionMode.Template
+        3 -> InteractionMode.Grid
+        else -> InteractionMode.Paint
     }
     else -> when (savedValue) {
-        InteractionModePaint,
-        InteractionModeFill,
-        InteractionModeLine,
-        InteractionModeTemplate,
-        InteractionModeGrid -> savedValue
-        else -> InteractionModePaint
+        0 -> InteractionMode.Paint
+        1 -> InteractionMode.Fill
+        2 -> InteractionMode.Line
+        3 -> InteractionMode.Template
+        4 -> InteractionMode.Grid
+        else -> InteractionMode.Paint
     }
-}
-
-fun serializeBoardSnapshot(snapshot: BoardSnapshot): String {
-    val serializedBeads = snapshot.beads.joinToString(",")
-    return buildString {
-        appendLine("beadmaker_format=$PatternFormatVersion")
-        appendLine("grid_columns=${snapshot.gridColumns}")
-        appendLine("grid_rows=${snapshot.gridRows}")
-        appendLine("stitch_mode_id=${snapshot.stitchModeId}")
-        appendLine("bead_shape_id=${snapshot.beadShapeId}")
-        append("beads=$serializedBeads")
-    }
-}
-
-fun deserializeBoardSnapshot(serialized: String): BoardSnapshot? {
-    val values = serialized
-        .lineSequence()
-        .mapNotNull { line ->
-            val separatorIndex = line.indexOf('=')
-            if (separatorIndex <= 0) {
-                null
-            } else {
-                val key = line.substring(0, separatorIndex).trim()
-                val value = line.substring(separatorIndex + 1).trim()
-                key to value
-            }
-        }
-        .toMap()
-
-    if (values["beadmaker_format"]?.toIntOrNull() != PatternFormatVersion) {
-        return null
-    }
-
-    val gridColumns = values["grid_columns"]?.toIntOrNull() ?: return null
-    val gridRows = values["grid_rows"]?.toIntOrNull() ?: return null
-    if (gridColumns !in MinGridSize..MaxGridSize || gridRows !in MinGridSize..MaxGridSize) {
-        return null
-    }
-
-    val stitchModeId = StitchMode.fromId(values["stitch_mode_id"].orEmpty()).id
-    val beadShapeId = BeadShape.fromId(values["bead_shape_id"].orEmpty()).id
-    val beadsText = values["beads"] ?: return null
-    val beads = beadsText.split(',').map { token ->
-        token.toIntOrNull() ?: return null
-    }
-    if (beads.size != gridColumns * gridRows || beads.any { it < EmptyBead }) {
-        return null
-    }
-
-    return BoardSnapshot(
-        gridColumns = gridColumns,
-        gridRows = gridRows,
-        stitchModeId = stitchModeId,
-        beadShapeId = beadShapeId,
-        beads = beads
-    )
 }
 
 fun isGridEmpty(beads: List<Int>): Boolean = beads.all { it == EmptyBead }

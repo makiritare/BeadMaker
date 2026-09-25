@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">BeadMaker</string>
+    <string name="app_name">Perla</string>
     <string name="stitch_square">Square Grid</string>
     <string name="stitch_peyote">Peyote (1-Drop)</string>
     <string name="stitch_peyote_2drop">Peyote (2-Drop)</string>
@@ -29,8 +29,10 @@
     <string name="grid_status">%1$s • %2$dx%3$d</string>
     <string name="template_image">Template image</string>
     <string name="import_template">Import</string>
+    <string name="template_import_failed">Couldn\'t import template image.</string>
     <string name="take_photo">Take Photo</string>
     <string name="remove_template">Remove</string>
+    <string name="create_pattern">Create Pattern</string>
     <string name="clear_grid">Clear</string>
     <string name="template">Template</string>
     <string name="opacity">Opacity</string>
@@ -42,6 +44,8 @@
     <string name="reset">Reset</string>
     <string name="import_template_hint">Import a template image to unlock template controls.</string>
     <string name="template_image_required_warning">Import a template image first.</string>
+    <string name="pattern_created">Pattern created.</string>
+    <string name="pattern_create_failed">Pattern creation failed.</string>
     <string name="select_color">Select Color</string>
     <string name="select_color_hint">Tap one color to paint with.</string>
     <string name="recent_colors">Recent colors</string>

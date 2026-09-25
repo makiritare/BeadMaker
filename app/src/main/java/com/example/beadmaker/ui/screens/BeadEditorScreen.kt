@@ -11,6 +11,8 @@ import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
@@ -18,6 +20,7 @@ import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ZoomIn
@@ -36,6 +39,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -51,6 +55,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -71,7 +76,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -89,24 +93,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.example.beadmaker.R
 import com.example.beadmaker.ui.components.BeadGrid
 import com.example.beadmaker.ui.model.BeadShape
+import com.example.beadmaker.ui.model.InteractionMode
 import com.example.beadmaker.ui.model.StitchMode
-import com.example.beadmaker.ui.state.InteractionModeFill
-import com.example.beadmaker.ui.state.InteractionModeLine
-import com.example.beadmaker.ui.state.InteractionModePaint
-import com.example.beadmaker.ui.state.InteractionModeTemplate
 import com.example.beadmaker.ui.state.MaxGridSize
 import com.example.beadmaker.ui.state.MinGridSize
 import com.example.beadmaker.ui.state.MinTemplateOpacity
+import com.example.beadmaker.ui.state.PaletteColorCount
 import com.example.beadmaker.ui.state.GridHorizontalResizeDirection
 import com.example.beadmaker.ui.state.GridVerticalResizeDirection
 import com.example.beadmaker.ui.state.calculateLineIndices
@@ -117,6 +122,8 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 private const val SpaceXs = 8
 private const val SpaceSm = 12
@@ -125,10 +132,9 @@ private const val PopupWidthFraction = 0.95f
 private const val CompactDropdownHeight = 54
 private const val CompactDropdownItemMinHeight = 42
 private const val CompactDirectionButtonHeight = 36
+private const val TransformEpsilon = 0.001f
 
 private val ControlShape = RoundedCornerShape(14.dp)
-private val PaletteChipShape = RoundedCornerShape(12.dp)
-private val PaletteChipInsetShape = RoundedCornerShape(8.dp)
 private val HistoryDockShape = RoundedCornerShape(24.dp)
 private val GridFrameShape = RoundedCornerShape(0.dp)
 private val GridInnerFrameShape = RoundedCornerShape(0.dp)
@@ -158,7 +164,11 @@ private val BasicPaletteColorValues = listOf(
     0xFF607D8B.toInt(),
     0xFFFF5722.toInt(),
     0xFF827717.toInt()
-)
+).also { colors ->
+    check(colors.size == PaletteColorCount) {
+        "Basic palette size must match PaletteColorCount."
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,6 +180,7 @@ fun BeadEditorScreen() {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val paletteColors = BasicPaletteColorValues.map { Color(it) }
+    var boardViewportSize by remember { mutableStateOf(IntSize.Zero) }
 
     val gridColumns = uiState.gridColumns
     val gridRows = uiState.gridRows
@@ -178,11 +189,15 @@ fun BeadEditorScreen() {
     val stitchMode = StitchMode.fromId(uiState.stitchModeId)
     val beadShape = BeadShape.fromId(uiState.beadShapeId)
     val currentColorIndex = uiState.selectedColorIndex.takeIf { it in paletteColors.indices } ?: 0
-    val templateAdjustMode = uiState.interactionMode == InteractionModeTemplate
-    val paintModeSelected = uiState.interactionMode == InteractionModePaint && !uiState.brushSelected && !uiState.eraserSelected
-    val brushModeSelected = uiState.interactionMode == InteractionModePaint && uiState.brushSelected
-    val fillModeSelected = uiState.interactionMode == InteractionModeFill && !uiState.eraserSelected
-    val lineModeSelected = uiState.interactionMode == InteractionModeLine && !uiState.eraserSelected
+    val templateAdjustMode = uiState.interactionMode == InteractionMode.Template
+    val templateOperationInProgress = uiState.isCreatingPattern || uiState.isImportingTemplate
+    val boardTransformReset = abs(uiState.boardScale - DefaultBoardScale) < TransformEpsilon &&
+        abs(uiState.boardOffsetX) < TransformEpsilon &&
+        abs(uiState.boardOffsetY) < TransformEpsilon
+    val paintModeSelected = uiState.interactionMode == InteractionMode.Paint && !uiState.brushSelected && !uiState.eraserSelected
+    val brushModeSelected = uiState.interactionMode == InteractionMode.Paint && uiState.brushSelected
+    val fillModeSelected = uiState.interactionMode == InteractionMode.Fill && !uiState.eraserSelected
+    val lineModeSelected = uiState.interactionMode == InteractionMode.Line && !uiState.eraserSelected
     val linePreviewIndices = if (lineModeSelected &&
         uiState.pendingLineStartIndex != null &&
         uiState.pendingLineEndIndex != null
@@ -200,7 +215,15 @@ fun BeadEditorScreen() {
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            editorState.importTemplateFromPicker(uri)
+            coroutineScope.launch {
+                if (!editorState.importTemplateFromPicker(uri)) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.template_import_failed),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
     }
     val cameraTemplateCapture = rememberLauncherForActivityResult(
@@ -212,19 +235,22 @@ fun BeadEditorScreen() {
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         if (uri != null) {
-            val exportSucceeded = editorState.exportPatternToUri(uri)
-            Toast.makeText(
-                context,
-                if (exportSucceeded) {
-                    context.getString(R.string.pattern_exported)
-                } else {
-                    context.getString(R.string.pattern_export_failed)
-                },
-                Toast.LENGTH_SHORT
-            ).show()
+            coroutineScope.launch {
+                val exportSucceeded = editorState.exportPatternToUri(uri)
+                Toast.makeText(
+                    context,
+                    if (exportSucceeded) {
+                        context.getString(R.string.pattern_exported)
+                    } else {
+                        context.getString(R.string.pattern_export_failed)
+                    },
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
     var showFileActionsDialog by rememberSaveable { mutableStateOf(false) }
+    var historyDockExpanded by rememberSaveable { mutableStateOf(false) }
     val modeStatusText = when {
         templateAdjustMode -> stringResource(R.string.status_template_adjust)
         lineModeSelected && uiState.pendingLineEndIndex != null -> stringResource(R.string.status_line_ready)
@@ -255,43 +281,49 @@ fun BeadEditorScreen() {
                 verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = SpaceMd.dp),
+                    modifier = Modifier.padding(horizontal = SpaceSm.dp),
                     verticalArrangement = Arrangement.spacedBy(SpaceMd.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            repeat(6) { slot ->
-                                val colorIndex = uiState.recentColorIndices.getOrNull(slot)
-                                val swatchColor = colorIndex?.let { paletteColors.getOrNull(it) }
-                                val isSelected = colorIndex == currentColorIndex
-                                RecentColorSwatch(
-                                    color = swatchColor,
-                                    selected = isSelected,
-                                    onClick = {
-                                        if (colorIndex == null || isSelected) {
-                                            editorState.showColorPicker()
-                                        } else {
-                                            editorState.applySelectedColor(colorIndex)
-                                        }
+                        repeat(6) { slot ->
+                            val colorIndex = uiState.recentColorIndices.getOrNull(slot)
+                            val swatchColor = colorIndex?.let { paletteColors.getOrNull(it) }
+                            val isSelected = colorIndex == currentColorIndex
+                            RecentColorSwatch(
+                                color = swatchColor,
+                                selected = isSelected,
+                                onClick = {
+                                    if (colorIndex == null || isSelected) {
+                                        editorState.showColorPicker()
+                                    } else {
+                                        editorState.applySelectedColor(colorIndex)
                                     }
-                                )
-                            }
+                                }
+                            )
                         }
                     }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Spacer(modifier = Modifier.weight(1f))
+                        ModeCircleButton(
+                            selected = uiState.eraserSelected,
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
+                            icon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ink_eraser_24px),
+                                    contentDescription = stringResource(R.string.eraser)
+                                )
+                            },
+                            onClick = editorState::toggleEraser
+                        )
 
                         ModeCircleButton(
                             selected = paintModeSelected,
@@ -304,19 +336,6 @@ fun BeadEditorScreen() {
                                 )
                             },
                             onClick = editorState::setPaintMode
-                        )
-
-                        ModeCircleButton(
-                            selected = uiState.eraserSelected,
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedContentColor = MaterialTheme.colorScheme.onPrimary,
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ink_eraser_24px),
-                                    contentDescription = stringResource(R.string.eraser)
-                                )
-                            },
-                            onClick = editorState::toggleEraser
                         )
 
                         ModeCircleButton(
@@ -352,14 +371,20 @@ fun BeadEditorScreen() {
                             icon = {
                                 Icon(
                                     painter = painterResource(R.drawable.diagonal_line_24px),
-                                    contentDescription = stringResource(R.string.mode_line)
+                                    contentDescription = stringResource(R.string.mode_line),
+                                    modifier = Modifier.size(22.dp),
+                                    tint = if (lineModeSelected) {
+                                        MaterialTheme.colorScheme.onSecondary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
                                 )
                             },
                             onClick = editorState::setLineMode
                         )
 
                         ModeCircleButton(
-                            selected = uiState.interactionMode == InteractionModeTemplate,
+                            selected = uiState.interactionMode == InteractionMode.Template,
                             selectedContainerColor = MaterialTheme.colorScheme.tertiary,
                             selectedContentColor = MaterialTheme.colorScheme.onTertiary,
                             icon = {
@@ -380,32 +405,21 @@ fun BeadEditorScreen() {
                                 }
                             }
                         )
-
-                        Spacer(modifier = Modifier.weight(1f))
                     }
+                }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = modeStatusText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(
-                                R.string.grid_status,
-                                stringResource(stitchMode.labelRes),
-                                gridColumns,
-                                gridRows
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
 
                 Box(
@@ -441,6 +455,7 @@ fun BeadEditorScreen() {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .onSizeChanged { boardViewportSize = it }
                             .pointerInput(templateAdjustMode) {
                                 if (!templateAdjustMode) {
                                     detectMultiTouchTransformGestures(
@@ -487,7 +502,6 @@ fun BeadEditorScreen() {
                             colors = paletteColors,
                             stitchMode = stitchMode,
                             beadShape = beadShape,
-                            boardScale = uiState.boardScale,
                             columns = gridColumns,
                             brushEnabled = brushModeSelected,
                             onBrushStrokeStart = editorState::startBrushStroke,
@@ -516,55 +530,165 @@ fun BeadEditorScreen() {
                         )
                     }
 
-                    Column(
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = SpaceSm.dp, top = SpaceSm.dp)
-                            .clip(HistoryDockShape)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
-                            .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
-                                shape = HistoryDockShape
-                            )
-                            .padding(vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .align(Alignment.TopEnd)
+                            .offset(y = (-4).dp)
+                            .padding(end = 4.dp, top = 8.dp),
+                        verticalAlignment = Alignment.Top
                     ) {
-                        IconButton(
-                            modifier = Modifier.size(56.dp),
-                            onClick = editorState::undo,
-                            enabled = editorState.canUndo
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.Undo,
-                                contentDescription = stringResource(R.string.undo),
-                                modifier = Modifier.size(28.dp)
-                            )
+                        if (historyDockExpanded) {
+                            Row(
+                                modifier = Modifier
+                                    .height(56.dp)
+                                    .clip(HistoryDockShape)
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+                                        shape = HistoryDockShape
+                                    )
+                                    .padding(start = 4.dp, end = 0.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    modifier = Modifier.size(56.dp),
+                                    onClick = editorState::undo,
+                                    enabled = editorState.canUndo
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.Undo,
+                                        contentDescription = stringResource(R.string.undo),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                IconButton(
+                                    modifier = Modifier.size(56.dp),
+                                    onClick = editorState::redo,
+                                    enabled = editorState.canRedo
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.Redo,
+                                        contentDescription = stringResource(R.string.redo),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                IconButton(
+                                    modifier = Modifier.size(56.dp),
+                                    onClick = editorState::resetBoardTransform,
+                                    enabled = !boardTransformReset
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.outline_arrows_input_24),
+                                        contentDescription = stringResource(R.string.reset),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                IconButton(
+                                    modifier = Modifier.size(56.dp),
+                                    onClick = editorState::clearGrid,
+                                    enabled = !editorState.isGridEmpty
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Autorenew,
+                                        contentDescription = stringResource(R.string.clear_grid),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                IconButton(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f))
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                                            shape = CircleShape
+                                        ),
+                                    onClick = { historyDockExpanded = !historyDockExpanded }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Remove,
+                                        contentDescription = stringResource(R.string.close),
+                                        modifier = Modifier.size(28.dp),
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                        } else {
+                            IconButton(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f))
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                                        shape = CircleShape
+                                    ),
+                                onClick = { historyDockExpanded = !historyDockExpanded }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Add,
+                                    contentDescription = stringResource(R.string.tools),
+                                    modifier = Modifier.size(28.dp),
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
                         }
+                    }
 
-                        IconButton(
-                            modifier = Modifier.size(56.dp),
-                            onClick = editorState::redo,
-                            enabled = editorState.canRedo
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.Redo,
-                                contentDescription = stringResource(R.string.redo),
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
+                    if (boardViewportSize != IntSize.Zero && uiState.boardScale > DefaultBoardScale) {
+                        BoardMinimap(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(start = SpaceSm.dp, bottom = SpaceSm.dp),
+                            beads = beads,
+                            colors = paletteColors,
+                            columns = gridColumns,
+                            rows = gridRows,
+                            stitchMode = stitchMode,
+                            beadShape = beadShape,
+                            viewportSize = boardViewportSize,
+                            boardScale = uiState.boardScale,
+                            boardOffsetX = uiState.boardOffsetX,
+                            boardOffsetY = uiState.boardOffsetY
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(SpaceXs.dp))
-                Spacer(modifier = Modifier.height(72.dp))
+                Text(
+                    text = stringResource(
+                        R.string.grid_status,
+                        stringResource(stitchMode.labelRes),
+                        gridColumns,
+                        gridRows
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(56.dp))
             }
+
+            BottomDockButton(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = SpaceMd.dp, vertical = SpaceMd.dp),
+                icon = Icons.Outlined.Save,
+                contentDescription = stringResource(R.string.file_actions),
+                onClick = { showFileActionsDialog = true }
+            )
 
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(horizontal = SpaceMd.dp, vertical = SpaceMd.dp),
-                horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 BottomDockButton(
@@ -572,15 +696,11 @@ fun BeadEditorScreen() {
                     contentDescription = stringResource(R.string.template),
                     onClick = { editorState.openToolsDialogAtTab(0) }
                 )
+                Spacer(modifier = Modifier.width(12.dp))
                 BottomDockButton(
                     icon = Icons.Outlined.Settings,
                     contentDescription = stringResource(R.string.settings),
                     onClick = { editorState.openToolsDialogAtTab(1) }
-                )
-                BottomDockButton(
-                    icon = Icons.Outlined.Save,
-                    contentDescription = stringResource(R.string.file_actions),
-                    onClick = { showFileActionsDialog = true }
                 )
             }
         }
@@ -649,6 +769,7 @@ fun BeadEditorScreen() {
                                         )
                                         editorState.dismissToolsDialog()
                                     },
+                                    enabled = !templateOperationInProgress,
                                     shape = ControlShape
                                 ) {
                                     Text(stringResource(R.string.import_template))
@@ -663,6 +784,7 @@ fun BeadEditorScreen() {
                                             editorState.dismissToolsDialog()
                                         }
                                     },
+                                    enabled = !templateOperationInProgress,
                                     shape = ControlShape
                                 ) {
                                     Text(stringResource(R.string.take_photo))
@@ -670,8 +792,43 @@ fun BeadEditorScreen() {
                             }
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val created = editorState.createPatternFromTemplateImage(
+                                            paletteColors = BasicPaletteColorValues,
+                                            viewportWidth = boardViewportSize.width,
+                                            viewportHeight = boardViewportSize.height
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            if (created) {
+                                                context.getString(R.string.pattern_created)
+                                            } else {
+                                                context.getString(R.string.pattern_create_failed)
+                                            },
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        if (created) {
+                                            editorState.dismissToolsDialog()
+                                        }
+                                    }
+                                },
+                                enabled = templateImageUri != null && !templateOperationInProgress,
+                                shape = ControlShape
+                            ) {
+                                if (uiState.isCreatingPattern) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text(stringResource(R.string.create_pattern))
+                                }
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
                                 onClick = editorState::removeTemplateImage,
-                                enabled = templateImageUri != null,
+                                enabled = templateImageUri != null && !templateOperationInProgress,
                                 shape = ControlShape
                             ) {
                                 Text(stringResource(R.string.remove_template))
@@ -746,27 +903,6 @@ fun BeadEditorScreen() {
                         }
 
                         1 -> {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-                            ) {
-                                OutlinedButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = editorState::clearGrid,
-                                    enabled = !editorState.isGridEmpty,
-                                    shape = ControlShape
-                                ) {
-                                    Text(stringResource(R.string.clear_grid))
-                                }
-                                OutlinedButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = editorState::resetBoardTransform,
-                                    shape = ControlShape
-                                ) {
-                                    Text(stringResource(R.string.reset))
-                                }
-                            }
-
                             Text(
                                 text = stringResource(R.string.stitch_type),
                                 style = MaterialTheme.typography.titleSmall
@@ -966,73 +1102,173 @@ fun BeadEditorScreen() {
     }
 
     if (showFileActionsDialog) {
-        AlertDialog(
-            modifier = Modifier.fillMaxWidth(PopupWidthFraction),
-            onDismissRequest = { showFileActionsDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-            title = { Text(text = stringResource(R.string.file_actions)) },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-                ) {
-                    Button(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            val saveSucceeded = editorState.savePattern()
-                            Toast.makeText(
-                                context,
-                                if (saveSucceeded) {
-                                    context.getString(R.string.pattern_saved)
-                                } else {
-                                    context.getString(R.string.pattern_save_failed)
-                                },
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            showFileActionsDialog = false
+        FileActionsDialog(
+            isOperationInProgress = uiState.isPatternIoInProgress,
+            onDismiss = { showFileActionsDialog = false },
+            onSave = {
+                coroutineScope.launch {
+                    val saveSucceeded = editorState.savePattern()
+                    Toast.makeText(
+                        context,
+                        if (saveSucceeded) {
+                            context.getString(R.string.pattern_saved)
+                        } else {
+                            context.getString(R.string.pattern_save_failed)
                         },
-                        shape = ControlShape
-                    ) {
-                        Text(stringResource(R.string.save))
-                    }
-                    OutlinedButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            val loadSucceeded = editorState.loadSavedPattern()
-                            Toast.makeText(
-                                context,
-                                if (loadSucceeded) {
-                                    context.getString(R.string.pattern_loaded)
-                                } else {
-                                    context.getString(R.string.pattern_load_failed)
-                                },
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            showFileActionsDialog = false
-                        },
-                        shape = ControlShape
-                    ) {
-                        Text(stringResource(R.string.load))
-                    }
-                    OutlinedButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            showFileActionsDialog = false
-                            exportPatternLauncher.launch(editorState.suggestedExportFileName())
-                        },
-                        shape = ControlShape
-                    ) {
-                        Text(stringResource(R.string.export))
-                    }
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    showFileActionsDialog = false
                 }
             },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showFileActionsDialog = false }) {
-                    Text(stringResource(R.string.cancel))
+            onLoad = {
+                coroutineScope.launch {
+                    val loadSucceeded = editorState.loadSavedPattern()
+                    Toast.makeText(
+                        context,
+                        if (loadSucceeded) {
+                            context.getString(R.string.pattern_loaded)
+                        } else {
+                            context.getString(R.string.pattern_load_failed)
+                        },
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    showFileActionsDialog = false
                 }
+            },
+            onExport = {
+                showFileActionsDialog = false
+                exportPatternLauncher.launch(editorState.suggestedExportFileName())
             }
         )
+    }
+}
+
+@Composable
+private fun BoardMinimap(
+    beads: List<Int>,
+    colors: List<Color>,
+    columns: Int,
+    rows: Int,
+    stitchMode: StitchMode,
+    beadShape: BeadShape,
+    viewportSize: IntSize,
+    boardScale: Float,
+    boardOffsetX: Float,
+    boardOffsetY: Float,
+    modifier: Modifier = Modifier
+) {
+    val minimapWidth = 112.dp
+    val minimapHeight = 112.dp
+    val minimapBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+    val minimapViewportColor = MaterialTheme.colorScheme.primary
+    val minimapCornerRadiusPx = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.toPx() }
+    val minimapViewportCornerRadiusPx = with(androidx.compose.ui.platform.LocalDensity.current) { 6.dp.toPx() }
+    val minimapViewportStrokePx = with(androidx.compose.ui.platform.LocalDensity.current) { 2.dp.toPx() }
+    val viewportWidth = viewportSize.width.toFloat().coerceAtLeast(1f)
+    val viewportHeight = viewportSize.height.toFloat().coerceAtLeast(1f)
+    val centerX = viewportWidth / 2f
+    val centerY = viewportHeight / 2f
+    val left = centerX + (0f - centerX - boardOffsetX) / boardScale
+    val top = centerY + (0f - centerY - boardOffsetY) / boardScale
+    val right = centerX + (viewportWidth - centerX - boardOffsetX) / boardScale
+    val bottom = centerY + (viewportHeight - centerY - boardOffsetY) / boardScale
+
+    Surface(
+        modifier = modifier.size(minimapWidth, minimapHeight),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+        ),
+        tonalElevation = 4.dp
+    ) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+            val safeColumns = max(columns, 1)
+            val safeRows = max(rows, 1)
+            val offsetFactor = when (stitchMode) {
+                StitchMode.Peyote, StitchMode.Peyote2Drop, StitchMode.Peyote3Drop -> 0.5f
+                StitchMode.Brick -> 0.58f
+                StitchMode.Square -> 0f
+            }
+            val layoutOffsetUnits = when (stitchMode.layoutStyle) {
+                com.example.beadmaker.ui.model.StitchLayoutStyle.Staggered -> offsetFactor
+                else -> 0f
+            }
+            val groupSize = when (stitchMode) {
+                StitchMode.Peyote2Drop -> 2
+                StitchMode.Peyote3Drop -> 3
+                else -> 1
+            }
+            val cellWidth = size.width / (safeColumns + layoutOffsetUnits)
+            val cellHeight = size.height / safeRows
+            val cellSize = min(cellWidth, cellHeight)
+            val contentWidth = cellSize * (safeColumns + layoutOffsetUnits)
+            val contentHeight = cellSize * safeRows
+            val startX = (size.width - contentWidth) / 2f
+            val startY = (size.height - contentHeight) / 2f
+            val oddRowOffset = cellSize * offsetFactor
+
+            drawRoundRect(
+                color = minimapBackgroundColor,
+                topLeft = Offset(startX, startY),
+                size = androidx.compose.ui.geometry.Size(contentWidth, contentHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(minimapCornerRadiusPx, minimapCornerRadiusPx)
+            )
+
+            beads.forEachIndexed { index, colorIndex ->
+                if (colorIndex !in colors.indices) return@forEachIndexed
+                val row = index / safeColumns
+                val column = index % safeColumns
+                if (row >= safeRows) return@forEachIndexed
+                val rowOffset = if (stitchMode.layoutStyle == com.example.beadmaker.ui.model.StitchLayoutStyle.Staggered &&
+                    (row / groupSize) % 2 == 1
+                ) {
+                    oddRowOffset
+                } else {
+                    0f
+                }
+                val cx = startX + rowOffset + (column + 0.5f) * cellSize
+                val cy = startY + (row + 0.5f) * cellSize
+                when (beadShape) {
+                    BeadShape.Circle -> drawCircle(
+                        color = colors[colorIndex],
+                        radius = cellSize * 0.34f,
+                        center = Offset(cx, cy)
+                    )
+
+                    BeadShape.RoundedRectangle -> drawRoundRect(
+                        color = colors[colorIndex],
+                        topLeft = Offset(cx - cellSize * 0.36f, cy - cellSize * 0.32f),
+                        size = androidx.compose.ui.geometry.Size(cellSize * 0.72f, cellSize * 0.64f),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(cellSize * 0.12f, cellSize * 0.12f)
+                    )
+                }
+            }
+
+            val viewportRect = androidx.compose.ui.geometry.Rect(
+                left = startX + (left / viewportWidth) * contentWidth,
+                top = startY + (top / viewportHeight) * contentHeight,
+                right = startX + (right / viewportWidth) * contentWidth,
+                bottom = startY + (bottom / viewportHeight) * contentHeight
+            )
+            drawRoundRect(
+                color = minimapViewportColor,
+                topLeft = Offset(
+                    max(startX, viewportRect.left),
+                    max(startY, viewportRect.top)
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    max(6f, min(startX + contentWidth, viewportRect.right) - max(startX, viewportRect.left)),
+                    max(6f, min(startY + contentHeight, viewportRect.bottom) - max(startY, viewportRect.top))
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    minimapViewportCornerRadiusPx,
+                    minimapViewportCornerRadiusPx
+                ),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = minimapViewportStrokePx)
+            )
+        }
     }
 }
 
@@ -1044,7 +1280,7 @@ private fun RecentColorSwatch(
 ) {
     Box(
         modifier = Modifier
-            .size(48.dp)
+            .size(46.dp)
             .clip(CircleShape)
             .background(color ?: MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
             .border(
@@ -1079,12 +1315,14 @@ private fun RecentColorSwatch(
 
 @Composable
 private fun BottomDockButton(
+    modifier: Modifier = Modifier,
     icon: ImageVector,
     contentDescription: String,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     IconButton(
-        modifier = Modifier
+        modifier = modifier
             .size(40.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
@@ -1093,7 +1331,8 @@ private fun BottomDockButton(
                 color = MaterialTheme.colorScheme.outlineVariant,
                 shape = CircleShape
             ),
-        onClick = onClick
+        onClick = onClick,
+        enabled = enabled
     ) {
         Icon(
             imageVector = icon,
@@ -1317,180 +1556,6 @@ private fun ResizeDirectionToggle(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PalettePickerDialog(
-    colors: List<Color>,
-    selectedColorIndex: Int,
-    recentColorIndices: List<Int>,
-    onDismiss: () -> Unit,
-    onApply: (Int) -> Unit
-) {
-    var pendingSelection by rememberSaveable(selectedColorIndex) {
-        mutableIntStateOf(selectedColorIndex)
-    }
-
-    AlertDialog(
-        modifier = Modifier.fillMaxWidth(PopupWidthFraction),
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        title = { Text(stringResource(R.string.select_color)) },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.select_color_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-                ) {
-                    colors.chunked(6).forEachIndexed { rowIndex, rowColors ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-                        ) {
-                            rowColors.forEachIndexed { columnIndex, color ->
-                                val colorIndex = rowIndex * 6 + columnIndex
-                                PaletteColorChip(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f),
-                                    color = color,
-                                    selected = pendingSelection == colorIndex,
-                                    onClick = {
-                                        pendingSelection = colorIndex
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Text(
-                    text = stringResource(R.string.recent_colors),
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(SpaceXs.dp)
-                ) {
-                    repeat(6) { slot ->
-                        val colorIndex = recentColorIndices.getOrNull(slot)
-                        if (colorIndex == null) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .aspectRatio(1f)
-                                    .clip(PaletteChipShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                                    .border(
-                                        width = 1.dp,
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                                        shape = PaletteChipShape
-                                    )
-                            )
-                        } else {
-                            val color = colors.getOrNull(colorIndex)
-                            if (color != null) {
-                                PaletteColorChip(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f),
-                                    color = color,
-                                    selected = pendingSelection == colorIndex,
-                                    onClick = {
-                                        pendingSelection = colorIndex
-                                    }
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .aspectRatio(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onApply(pendingSelection)
-                }
-            ) {
-                Text(stringResource(R.string.apply))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.cancel))
-            }
-        }
-    )
-}
-
-@Composable
-private fun PaletteColorChip(
-    color: Color,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier
-            .clip(PaletteChipShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-            .border(
-                width = if (selected) 4.dp else 1.dp,
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.outlineVariant
-                },
-                shape = PaletteChipShape
-            )
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        androidx.compose.foundation.Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(6.dp)
-        ) {
-            val radius = size.minDimension * 0.42f
-            drawCircle(color = color, radius = radius)
-            drawCircle(
-                color = Color.Black.copy(alpha = 0.15f),
-                radius = radius,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.2.dp.toPx())
-            )
-            drawCircle(
-                color = Color.White.copy(alpha = 0.25f),
-                radius = radius * 0.4f,
-                center = center.copy(x = center.x - radius * 0.3f, y = center.y - radius * 0.3f)
-            )
-        }
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(4.dp)
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = PaletteChipInsetShape
-                    )
-            )
         }
     }
 }

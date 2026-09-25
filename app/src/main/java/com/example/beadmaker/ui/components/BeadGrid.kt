@@ -32,14 +32,15 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.floor
 import com.example.beadmaker.ui.model.BeadShape
 import com.example.beadmaker.ui.model.StitchLayoutStyle
 import com.example.beadmaker.ui.model.StitchMode
 
 private val BeadCellCircleShape = CircleShape
 private val BeadCellRoundedRectShape = RoundedCornerShape(6.dp)
-private val GridNumberMinVisibleCellSize = 18.dp
 
 @Composable
 fun BeadGrid(
@@ -48,7 +49,6 @@ fun BeadGrid(
     stitchMode: StitchMode,
     beadShape: BeadShape,
     modifier: Modifier = Modifier,
-    boardScale: Float = 1f,
     columns: Int = 16,
     brushEnabled: Boolean = false,
     lineStartIndex: Int? = null,
@@ -82,31 +82,25 @@ fun BeadGrid(
             StitchLayoutStyle.Staggered -> offsetFactor
             else -> 0f
         }
-        val unlabeledBeadSizeByWidth = maxWidth / (safeColumns + layoutOffsetUnits)
-        val unlabeledBeadSizeByHeight = maxHeight / safeRows.toFloat()
-        val unlabeledBeadSize = if (unlabeledBeadSizeByWidth < unlabeledBeadSizeByHeight) {
-            unlabeledBeadSizeByWidth
-        } else {
-            unlabeledBeadSizeByHeight
-        }
-        val labeledBeadSizeByWidth = maxWidth / (safeColumns + layoutOffsetUnits + 1f)
-        val labeledBeadSizeByHeight = maxHeight / (safeRows + 1f)
-        val labeledBeadSize = if (labeledBeadSizeByWidth < labeledBeadSizeByHeight) {
-            labeledBeadSizeByWidth
-        } else {
-            labeledBeadSizeByHeight
-        }
-        val showGridNumbers = labeledBeadSize * boardScale >= GridNumberMinVisibleCellSize
-        val beadSize = if (showGridNumbers) labeledBeadSize else unlabeledBeadSize
-        val oddRowOffset = beadSize * offsetFactor
-        val beadSizePx = with(density) { beadSize.toPx() }
-        val oddRowOffsetPx = with(density) { oddRowOffset.toPx() }
-        val contentWidthPx = beadSizePx * (safeColumns + layoutOffsetUnits + if (showGridNumbers) 1f else 0f)
-        val contentHeightPx = beadSizePx * (safeRows + if (showGridNumbers) 1 else 0)
+        val beadSizeByWidthPx = constraints.maxWidth / (safeColumns + layoutOffsetUnits)
+        val beadSizeByHeightPx = constraints.maxHeight / safeRows.toFloat()
+        val beadSizePx = floor(minOf(beadSizeByWidthPx, beadSizeByHeightPx)).coerceAtLeast(1f)
+        val beadSize: Dp = with(density) { beadSizePx.toDp() }
+        val oddRowOffsetPx = beadSizePx * offsetFactor
+        val oddRowOffset: Dp = with(density) { oddRowOffsetPx.toDp() }
+        val contentWidthPx = beadSizePx * (safeColumns + layoutOffsetUnits)
+        val contentHeightPx = beadSizePx * safeRows
         val contentOriginX = (constraints.maxWidth - contentWidthPx) / 2f
         val contentOriginY = (constraints.maxHeight - contentHeightPx) / 2f
-        val gridOriginX = contentOriginX + if (showGridNumbers) beadSizePx else 0f
-        val gridOriginY = contentOriginY + if (showGridNumbers) beadSizePx else 0f
+        val gridOriginX = contentOriginX
+        val gridOriginY = contentOriginY
+        val pointerOddRowOffsetPx = oddRowOffsetPx
+        /*
+         * Snap bead size to full pixels so every column/row renders with the same
+         * actual width. Fractional dp accumulation can make the last column appear
+         * slightly narrower on dense grids.
+         */
+        
 
         Box(
             modifier = Modifier
@@ -116,7 +110,7 @@ fun BeadGrid(
                     beadSizePx,
                     gridOriginX,
                     gridOriginY,
-                    oddRowOffsetPx,
+                    pointerOddRowOffsetPx,
                     safeColumns,
                     safeRows,
                     groupSize,
@@ -128,11 +122,11 @@ fun BeadGrid(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var lastPaintedIndex: Int? = null
                         val startIndex = beadIndexAtPosition(
-                            position = down.position,
-                            gridOriginX = gridOriginX,
-                            gridOriginY = gridOriginY,
-                            beadSizePx = beadSizePx,
-                            oddRowOffsetPx = oddRowOffsetPx,
+                                position = down.position,
+                                gridOriginX = gridOriginX,
+                                gridOriginY = gridOriginY,
+                                beadSizePx = beadSizePx,
+                                oddRowOffsetPx = pointerOddRowOffsetPx,
                             columns = safeColumns,
                             rows = safeRows,
                             groupSize = groupSize,
@@ -152,7 +146,7 @@ fun BeadGrid(
                                 gridOriginX = gridOriginX,
                                 gridOriginY = gridOriginY,
                                 beadSizePx = beadSizePx,
-                                oddRowOffsetPx = oddRowOffsetPx,
+                                oddRowOffsetPx = pointerOddRowOffsetPx,
                                 columns = safeColumns,
                                 rows = safeRows,
                                 groupSize = groupSize,
@@ -170,106 +164,49 @@ fun BeadGrid(
             contentAlignment = Alignment.Center
         ) {
             Column {
-                if (showGridNumbers) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        GridNumberCell(
-                            label = null,
-                            modifier = Modifier.width(beadSize)
-                        )
-                        repeat(safeColumns) { columnIndex ->
-                            GridNumberCell(
-                                label = (columnIndex + 1).toString(),
-                                modifier = Modifier.width(beadSize)
+                beadRows.forEachIndexed { rowIndex, row ->
+                    val isStaggeredRow = (rowIndex / groupSize) % 2 == 1
+                    val rowOffset = when (stitchMode.layoutStyle) {
+                        StitchLayoutStyle.Staggered -> if (isStaggeredRow) oddRowOffset else 0.dp
+                        else -> 0.dp
+                    }
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (stitchMode.layoutStyle == StitchLayoutStyle.Staggered && isStaggeredRow) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.055f)
+                                } else {
+                                    Color.Transparent
+                                },
+                                shape = RoundedCornerShape(10.dp)
                             )
-                        }
-                        if (oddRowOffset > 0.dp) {
-                            Spacer(modifier = Modifier.width(oddRowOffset))
-                        }
-                    }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.Top
-                ) {
-                    if (showGridNumbers) {
-                        Column {
-                            repeat(safeRows) { rowIndex ->
-                                GridNumberCell(
-                                    label = (rowIndex + 1).toString(),
-                                    modifier = Modifier.width(beadSize)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.Start
+                        ) {
+                            if (rowOffset > 0.dp) {
+                                Spacer(modifier = Modifier.width(rowOffset))
+                            }
+                            row.forEachIndexed { columnIndex, beadColorIndex ->
+                                val beadIndex = rowIndex * safeColumns + columnIndex
+                                BeadCell(
+                                    beadColor = beadColorIndex
+                                        .takeIf { it >= 0 }
+                                        ?.let(colors::getOrNull),
+                                    beadShape = beadShape,
+                                    highlighted = beadIndex in linePreviewIndices,
+                                    startMarked = beadIndex == lineStartIndex,
+                                    modifier = Modifier.width(beadSize),
+                                    inputEnabled = !brushEnabled,
+                                    onPressStart = { onCellPressStart(beadIndex) },
+                                    onPressEnd = onCellPressEnd,
+                                    onTap = { onCellTap(beadIndex) }
                                 )
-                            }
-                        }
-                    }
-
-                    Column {
-                        beadRows.forEachIndexed { rowIndex, row ->
-                            val isStaggeredRow = (rowIndex / groupSize) % 2 == 1
-                            val rowOffset = when (stitchMode.layoutStyle) {
-                                StitchLayoutStyle.Staggered -> if (isStaggeredRow) oddRowOffset else 0.dp
-                                else -> 0.dp
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        if (stitchMode.layoutStyle == StitchLayoutStyle.Staggered && isStaggeredRow) {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.055f)
-                                        } else {
-                                            Color.Transparent
-                                        },
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
-                            ) {
-                                Row(
-                                    horizontalArrangement = Arrangement.Start
-                                ) {
-                                    if (rowOffset > 0.dp) {
-                                        Spacer(modifier = Modifier.width(rowOffset))
-                                    }
-                                    row.forEachIndexed { columnIndex, beadColorIndex ->
-                                        val beadIndex = rowIndex * safeColumns + columnIndex
-                                        BeadCell(
-                                            beadColor = beadColorIndex
-                                                .takeIf { it >= 0 }
-                                                ?.let(colors::getOrNull),
-                                            beadShape = beadShape,
-                                            highlighted = beadIndex in linePreviewIndices,
-                                            startMarked = beadIndex == lineStartIndex,
-                                            modifier = Modifier.width(beadSize),
-                                            inputEnabled = !brushEnabled,
-                                            onPressStart = { onCellPressStart(beadIndex) },
-                                            onPressEnd = onCellPressEnd,
-                                            onTap = { onCellTap(beadIndex) }
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun GridNumberCell(
-    label: String?,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier.aspectRatio(1f),
-        contentAlignment = Alignment.Center
-    ) {
-        if (label != null) {
-            androidx.compose.material3.Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f),
-                maxLines = 1
-            )
         }
     }
 }
@@ -288,9 +225,14 @@ private fun BeadCell(
 ) {
     val isDark = isSystemInDarkTheme()
     val outline = MaterialTheme.colorScheme.outline
-    val previewColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.95f)
-    val startMarkerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
-    val startMarkerFillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+    val previewFillColor = Color(0xFFFFD54F).copy(alpha = 0.3f)
+    val previewColor = Color(0xFFFFC107)
+    val previewHaloColor = Color.White.copy(alpha = 0.98f)
+    val previewShadowColor = Color.Black.copy(alpha = if (isDark) 0.92f else 0.72f)
+    val startMarkerColor = Color(0xFF00BCD4)
+    val startMarkerHaloColor = Color.White.copy(alpha = 0.98f)
+    val startMarkerShadowColor = Color.Black.copy(alpha = if (isDark) 0.92f else 0.72f)
+    val startMarkerFillColor = Color(0xFF00BCD4).copy(alpha = 0.96f)
     val emptyBeadOutlineColor = if (isDark) {
         Color.White.copy(alpha = 0.42f)
     } else {
@@ -434,40 +376,116 @@ private fun BeadCell(
             }
 
             if (highlighted) {
+                val previewShadowStroke = Stroke(width = 5.dp.toPx())
+                val previewHaloStroke = Stroke(width = 3.5.dp.toPx())
                 val previewStroke = Stroke(width = 2.dp.toPx())
                 when (beadShape) {
-                    BeadShape.Circle -> drawCircle(
-                        color = previewColor,
-                        radius = shapeRadius,
-                        style = previewStroke
-                    )
+                    BeadShape.Circle -> {
+                        drawCircle(
+                            color = previewFillColor,
+                            radius = shapeRadius * 0.88f
+                        )
+                        drawCircle(
+                            color = previewShadowColor,
+                            radius = shapeRadius,
+                            style = previewShadowStroke
+                        )
+                        drawCircle(
+                            color = previewHaloColor,
+                            radius = shapeRadius,
+                            style = previewHaloStroke
+                        )
+                        drawCircle(
+                            color = previewColor,
+                            radius = shapeRadius,
+                            style = previewStroke
+                        )
+                    }
 
-                    BeadShape.RoundedRectangle -> drawRoundRect(
-                        color = previewColor,
-                        topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
-                        size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
-                        cornerRadius = rectCorner,
-                        style = previewStroke
-                    )
+                    BeadShape.RoundedRectangle -> {
+                        drawRoundRect(
+                            color = previewFillColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                rectLeft + rectWidth * 0.08f,
+                                rectTop + rectHeight * 0.08f
+                            ),
+                            size = androidx.compose.ui.geometry.Size(
+                                rectWidth * 0.84f,
+                                rectHeight * 0.84f
+                            ),
+                            cornerRadius = CornerRadius(rectHeight * 0.16f, rectHeight * 0.16f)
+                        )
+                        drawRoundRect(
+                            color = previewShadowColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = previewShadowStroke
+                        )
+                        drawRoundRect(
+                            color = previewHaloColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = previewHaloStroke
+                        )
+                        drawRoundRect(
+                            color = previewColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = previewStroke
+                        )
+                    }
                 }
             }
 
             if (startMarked) {
+                val startShadowStroke = Stroke(width = 5.dp.toPx())
+                val startHaloStroke = Stroke(width = 4.dp.toPx())
                 val startStroke = Stroke(width = 2.5.dp.toPx())
                 when (beadShape) {
                     BeadShape.Circle -> {
+                        drawCircle(
+                            color = startMarkerShadowColor,
+                            radius = shapeRadius,
+                            style = startShadowStroke
+                        )
+                        drawCircle(
+                            color = startMarkerHaloColor,
+                            radius = shapeRadius,
+                            style = startHaloStroke
+                        )
                         drawCircle(
                             color = startMarkerColor,
                             radius = shapeRadius,
                             style = startStroke
                         )
                         drawCircle(
+                            color = Color.White.copy(alpha = 0.98f),
+                            radius = shapeRadius * 0.32f
+                        )
+                        drawCircle(
                             color = startMarkerFillColor,
-                            radius = shapeRadius * 0.22f
+                            radius = shapeRadius * 0.18f
                         )
                     }
 
                     BeadShape.RoundedRectangle -> {
+                        drawRoundRect(
+                            color = startMarkerShadowColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = startShadowStroke
+                        )
+                        drawRoundRect(
+                            color = startMarkerHaloColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
+                            size = androidx.compose.ui.geometry.Size(rectWidth, rectHeight),
+                            cornerRadius = rectCorner,
+                            style = startHaloStroke
+                        )
                         drawRoundRect(
                             color = startMarkerColor,
                             topLeft = androidx.compose.ui.geometry.Offset(rectLeft, rectTop),
@@ -475,7 +493,17 @@ private fun BeadCell(
                             cornerRadius = rectCorner,
                             style = startStroke
                         )
-                        val markerSize = size.minDimension * 0.22f
+                        val markerHaloSize = size.minDimension * 0.3f
+                        drawRoundRect(
+                            color = Color.White.copy(alpha = 0.98f),
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                center.x - markerHaloSize / 2f,
+                                center.y - markerHaloSize / 2f
+                            ),
+                            size = androidx.compose.ui.geometry.Size(markerHaloSize, markerHaloSize),
+                            cornerRadius = CornerRadius(markerHaloSize * 0.28f, markerHaloSize * 0.28f)
+                        )
+                        val markerSize = size.minDimension * 0.18f
                         drawRoundRect(
                             color = startMarkerFillColor,
                             topLeft = androidx.compose.ui.geometry.Offset(

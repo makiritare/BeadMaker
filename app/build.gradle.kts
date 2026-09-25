@@ -47,6 +47,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
     val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
 
     implementation("androidx.core:core-ktx:1.17.0")
